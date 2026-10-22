@@ -1,28 +1,23 @@
-# Secrets
+# Secrets - never commit these
 .env
 *.env
 
-# Database
+# Local state
 *.db
 *.db-wal
 *.db-shm
+exports/
+logs/
+*.xlsx
+!tests/fixtures/**/*.xlsx
 
 # Python
 __pycache__/
 *.py[cod]
-*.pyo
+.pytest_cache/
 .venv/
 venv/
 env/
-
-# Excel outputs
-exports/
-
-# Logs
-logs/
-
-# Test artifacts
-tests/fixtures/live/
 
 # OS
 .DS_Store

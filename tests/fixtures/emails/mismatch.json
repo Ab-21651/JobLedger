@@ -1,0 +1,9 @@
+[
+  {
+    "uid": "fx-m-1",
+    "sender": "alerts@jobboard-one.example",
+    "subject": "Job alert: 1 new job",
+    "received_at": "2026-10-05T09:00:00+00:00",
+    "body_text": "1. Data Engineer\nBrightside - Remote\nFull-time | GBP 70,000 a year\nApply: https://brightside.example/jobs/data-engineer\n"
+  }
+]

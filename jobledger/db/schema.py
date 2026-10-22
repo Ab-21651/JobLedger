@@ -1,8 +1,18 @@
-"""SQLite schema migration module for JobLedger."""
+"""SQLite schema + migrations for JobLedger.
+
+Migrations are lists of single statements applied inside ONE transaction each
+(SQLite DDL is transactional), so a failed migration leaves the DB untouched.
+
+Memory map (see docs/ARCHITECTURE.md):
+  long-term  : profiles, cv_versions, preferences_history, jobs, job_sources,
+               jd_snapshots, evaluations, applications, application_stage_history,
+               follow_ups, mailbox_state
+  episodic   : action_logs (decisions, tool results, corrections, errors, retries)
+  working    : in-process AgentContext, serialised into processing_runs.checkpoint
+"""
+from __future__ import annotations
 
 import sqlite3
-
-SCHEMA_VERSION = 1
 
 _MIGRATION_1_SQL = """
 CREATE TABLE IF NOT EXISTS profiles (
@@ -230,44 +240,237 @@ CREATE TABLE IF NOT EXISTS approval_requests (
 CREATE INDEX IF NOT EXISTS idx_approval_requests_status ON approval_requests(status);
 """
 
-MIGRATIONS: list[tuple[int, str]] = [
-    (1, _MIGRATION_1_SQL),
+# Migration 2: history-preserving evaluations, cross-source dedup + conflicts,
+# approval payloads, mailbox state, and DB-level profile-isolation triggers.
+_MIGRATION_2_STATEMENTS = [
+    # --- evaluations: keep EVERY evaluation (history) instead of replacing ---
+    """CREATE TABLE evaluations_v2 (
+        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id              INTEGER NOT NULL REFERENCES jobs(id),
+        profile_id          INTEGER NOT NULL REFERENCES profiles(id),
+        cv_version_id       INTEGER REFERENCES cv_versions(id),
+        eval_version        TEXT NOT NULL DEFAULT 'v1',
+        input_hash          TEXT NOT NULL DEFAULT '',
+        prefs_version       INTEGER NOT NULL DEFAULT 0,
+        status              TEXT NOT NULL DEFAULT 'scored',
+        scoring_mode        TEXT NOT NULL DEFAULT 'llm',
+        hard_filter_pass    INTEGER,
+        hard_filter_details TEXT,
+        skill_score         REAL,
+        experience_score    REAL,
+        arrangement_score   REAL,
+        type_score          REAL,
+        location_score      REAL,
+        total_score         REAL,
+        score_breakdown     TEXT,
+        llm_assessment      TEXT,
+        llm_model           TEXT,
+        llm_provider        TEXT,
+        match_rationale     TEXT,
+        missing_info        TEXT,
+        label_expected      INTEGER,
+        label_rationale     TEXT,
+        evaluated_at        TEXT NOT NULL,
+        UNIQUE(job_id, profile_id, eval_version, input_hash)
+    )""",
+    """INSERT INTO evaluations_v2 (
+        id, job_id, profile_id, cv_version_id, eval_version, hard_filter_pass,
+        hard_filter_details, skill_score, experience_score, arrangement_score,
+        type_score, location_score, total_score, score_breakdown, llm_assessment,
+        llm_model, llm_provider, match_rationale, missing_info, label_expected,
+        label_rationale, evaluated_at)
+       SELECT id, job_id, profile_id, cv_version_id, eval_version, hard_filter_pass,
+        hard_filter_details, skill_score, experience_score, arrangement_score,
+        type_score, location_score, total_score, score_breakdown, llm_assessment,
+        llm_model, llm_provider, match_rationale, missing_info, label_expected,
+        label_rationale, evaluated_at FROM evaluations""",
+    "DROP TABLE evaluations",
+    "ALTER TABLE evaluations_v2 RENAME TO evaluations",
+    "CREATE INDEX idx_evaluations_profile_id ON evaluations(profile_id)",
+    "CREATE INDEX idx_evaluations_job_profile ON evaluations(job_id, profile_id, id)",
+
+    # --- jobs: workflow state, dedup key, uncertainty ---
+    "ALTER TABLE jobs ADD COLUMN tc_key TEXT",
+    "ALTER TABLE jobs ADD COLUMN workflow_status TEXT NOT NULL DEFAULT 'new'",
+    "ALTER TABLE jobs ADD COLUMN workflow_reason TEXT",
+    "ALTER TABLE jobs ADD COLUMN uncertain_fields TEXT",
+    "CREATE INDEX idx_jobs_tc_key ON jobs(profile_id, tc_key)",
+
+    # --- every place a job was seen (different alert sources keep their own evidence) ---
+    """CREATE TABLE job_sources (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id        INTEGER NOT NULL REFERENCES jobs(id),
+        profile_id    INTEGER NOT NULL REFERENCES profiles(id),
+        email_id      INTEGER REFERENCES processed_emails(id),
+        source_label  TEXT,
+        url           TEXT,
+        canonical_url TEXT,
+        title_seen    TEXT,
+        company_seen  TEXT,
+        location_seen TEXT,
+        arrangement_seen TEXT,
+        type_seen     TEXT,
+        salary_seen   TEXT,
+        seen_at       TEXT NOT NULL,
+        UNIQUE(job_id, email_id, canonical_url)
+    )""",
+    "CREATE INDEX idx_job_sources_job ON job_sources(job_id)",
+
+    # --- conflicting evidence is preserved, never silently resolved ---
+    """CREATE TABLE job_conflicts (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id          INTEGER NOT NULL REFERENCES jobs(id),
+        profile_id      INTEGER NOT NULL REFERENCES profiles(id),
+        field_name      TEXT NOT NULL,
+        value_a         TEXT,
+        source_a        TEXT,
+        value_b         TEXT,
+        source_b        TEXT,
+        detected_at     TEXT NOT NULL,
+        status          TEXT NOT NULL DEFAULT 'open',
+        resolution      TEXT,
+        UNIQUE(job_id, field_name, value_a, value_b)
+    )""",
+
+    # --- jd snapshots: where did this text come from ---
+    "ALTER TABLE jd_snapshots ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'url'",
+    "ALTER TABLE jd_snapshots ADD COLUMN injection_flags TEXT",
+
+    # --- mailbox cursor: last-seen UID per (profile, folder, uidvalidity) ---
+    """CREATE TABLE mailbox_state (
+        profile_id  INTEGER NOT NULL REFERENCES profiles(id),
+        folder      TEXT NOT NULL,
+        uidvalidity TEXT NOT NULL,
+        last_uid    INTEGER NOT NULL DEFAULT 0,
+        updated_at  TEXT NOT NULL,
+        PRIMARY KEY (profile_id, folder, uidvalidity)
+    )""",
+
+    # --- approvals carry the exact action to run once approved ---
+    "ALTER TABLE approval_requests ADD COLUMN payload TEXT",
+    "ALTER TABLE approval_requests ADD COLUMN application_id INTEGER",
+    "ALTER TABLE approval_requests ADD COLUMN executed_at TEXT",
+    "ALTER TABLE approval_requests ADD COLUMN result TEXT",
+    "ALTER TABLE approval_requests ADD COLUMN requires_approval INTEGER NOT NULL DEFAULT 1",
+
+    # --- follow-ups: one row per application ---
+    "CREATE UNIQUE INDEX idx_follow_ups_application ON follow_ups(application_id)",
+    "ALTER TABLE follow_ups ADD COLUMN last_checked_at TEXT",
+
+    # --- applications: recruiter reply date feeds follow-up rules ---
+    "ALTER TABLE applications ADD COLUMN last_reply_at TEXT",
+
+    # --- action logs (episodic memory) gain step + next-state columns ---
+    "ALTER TABLE action_logs ADD COLUMN step_no INTEGER",
+    "ALTER TABLE action_logs ADD COLUMN next_state TEXT",
+    "ALTER TABLE action_logs ADD COLUMN llm_evidence_refs TEXT",
+    "ALTER TABLE action_logs ADD COLUMN llm_reasoning TEXT",
+    "CREATE INDEX idx_action_logs_job ON action_logs(job_id)",
+
+    # --- processing runs: mode + error text ---
+    "ALTER TABLE processing_runs ADD COLUMN mode TEXT",
+    "ALTER TABLE processing_runs ADD COLUMN error TEXT",
+
+    # --- DB-level profile isolation: rows must agree on who owns the job ---
+    """CREATE TRIGGER trg_applications_profile_match
+       BEFORE INSERT ON applications
+       WHEN (SELECT profile_id FROM jobs WHERE id = NEW.job_id) IS NOT NEW.profile_id
+       BEGIN SELECT RAISE(ABORT, 'profile isolation: application profile does not own job'); END""",
+    """CREATE TRIGGER trg_evaluations_profile_match
+       BEFORE INSERT ON evaluations
+       WHEN (SELECT profile_id FROM jobs WHERE id = NEW.job_id) IS NOT NEW.profile_id
+       BEGIN SELECT RAISE(ABORT, 'profile isolation: evaluation profile does not own job'); END""",
+    """CREATE TRIGGER trg_job_sources_profile_match
+       BEFORE INSERT ON job_sources
+       WHEN (SELECT profile_id FROM jobs WHERE id = NEW.job_id) IS NOT NEW.profile_id
+       BEGIN SELECT RAISE(ABORT, 'profile isolation: source profile does not own job'); END""",
+    """CREATE TRIGGER trg_job_conflicts_profile_match
+       BEFORE INSERT ON job_conflicts
+       WHEN (SELECT profile_id FROM jobs WHERE id = NEW.job_id) IS NOT NEW.profile_id
+       BEGIN SELECT RAISE(ABORT, 'profile isolation: conflict profile does not own job'); END""",
+    """CREATE TRIGGER trg_jobs_email_profile_match
+       BEFORE INSERT ON jobs
+       WHEN NEW.source_email_id IS NOT NULL
+        AND (SELECT profile_id FROM processed_emails WHERE id = NEW.source_email_id) IS NOT NEW.profile_id
+       BEGIN SELECT RAISE(ABORT, 'profile isolation: email belongs to another profile'); END""",
 ]
 
 
+def _split_statements(script: str) -> list[str]:
+    """Split a multi-statement script on complete statements (trigger-safe)."""
+    statements, buf = [], ""
+    for line in script.splitlines(keepends=True):
+        buf += line
+        if sqlite3.complete_statement(buf):
+            if buf.strip():
+                statements.append(buf.strip())
+            buf = ""
+    if buf.strip():
+        statements.append(buf.strip())
+    return statements
+
+
+# --- v3: evaluation history is append-only, enforced by the database and not only by convention ---
+_MIGRATION_3_STATEMENTS = [
+    """CREATE TRIGGER trg_evaluations_no_update
+       BEFORE UPDATE ON evaluations
+       BEGIN SELECT RAISE(ABORT, 'evaluations are append-only: insert a new evaluation instead'); END""",
+    """CREATE TRIGGER trg_evaluations_no_delete
+       BEFORE DELETE ON evaluations
+       BEGIN SELECT RAISE(ABORT, 'evaluations are append-only: history is never deleted'); END""",
+]
+
+MIGRATIONS: list[tuple[int, list[str]]] = [
+    (1, _split_statements(_MIGRATION_1_SQL)),
+    (2, _MIGRATION_2_STATEMENTS),
+    (3, _MIGRATION_3_STATEMENTS),
+]
+
+SCHEMA_VERSION = MIGRATIONS[-1][0]
+
+
 def get_connection(db_path: str) -> sqlite3.Connection:
-    """Open a SQLite connection with WAL mode, foreign keys, and Row factory."""
-    conn = sqlite3.connect(db_path)
+    """Open SQLite in autocommit mode (we issue explicit BEGIN/COMMIT via tx())."""
+    conn = sqlite3.connect(db_path, isolation_level=None, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA busy_timeout=10000")
     return conn
 
 
-def apply_migrations(conn: sqlite3.Connection) -> None:
-    """Apply any outstanding schema migrations in order."""
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS schema_version (
-            version INTEGER NOT NULL
-        )
-        """
-    )
-    conn.commit()
+def current_version(conn: sqlite3.Connection) -> int:
+    conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)")
+    row = conn.execute("SELECT MAX(version) AS v FROM schema_version").fetchone()
+    return int(row["v"]) if row and row["v"] is not None else 0
 
-    row = conn.execute("SELECT version FROM schema_version").fetchone()
-    current_version: int = row["version"] if row else 0
 
-    for version, sql in MIGRATIONS:
-        if version <= current_version:
+def apply_migrations(conn: sqlite3.Connection) -> int:
+    """Apply outstanding migrations, each atomically. Returns the final version."""
+    version_now = current_version(conn)
+    for version, statements in MIGRATIONS:
+        if version <= version_now:
             continue
-        with conn:
-            conn.executescript(sql)
-            if row is None and version == 1:
+        # foreign keys must be off for table rebuilds
+        conn.execute("PRAGMA foreign_keys=OFF")
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                for stmt in statements:
+                    conn.execute(stmt)
+                conn.execute("DELETE FROM schema_version")
                 conn.execute("INSERT INTO schema_version (version) VALUES (?)", (version,))
-            else:
-                conn.execute("UPDATE schema_version SET version = ?", (version,))
-            row = True  # mark that a row now exists
+                bad = conn.execute("PRAGMA foreign_key_check").fetchall()
+                if bad:
+                    raise sqlite3.IntegrityError(f"foreign_key_check failed after migration {version}")
+                conn.execute("COMMIT")
+            except BaseException:
+                conn.execute("ROLLBACK")
+                raise
+        finally:
+            conn.execute("PRAGMA foreign_keys=ON")
+        version_now = version
+    return version_now
 
 
 def init_db(db_path: str) -> sqlite3.Connection:

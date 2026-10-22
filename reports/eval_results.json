@@ -1,0 +1,449 @@
+{
+  "meta": {
+    "generated_at": "2026-10-22T13:53:24+00:00",
+    "python": "3.13.16",
+    "platform": "Linux-6.18.44-fc-v140-x86_64-with-glibc2.39",
+    "mode": "offline: fixture emails / FakeIMAP, FakeWeb JD pages, scripted LLM doubles. No live mailbox, model or web.",
+    "passed": 79,
+    "total": 79
+  },
+  "results": {
+    "S01.run_completed": {
+      "passed": true,
+      "detail": "status=completed counters={'emails_scanned': 1, 'emails_processed': 1, 'emails_duplicate': 0, 'jobs_new': 4, 'jobs_seen': 4, 'jobs_evaluated': 4, 'reply_proposals': 0, 'injection_events': 0} errors=[]"
+    },
+    "S01.acme_scored_high": {
+      "passed": true,
+      "detail": "acme=scored/100.0"
+    },
+    "S01.dataworks_scored": {
+      "passed": true,
+      "detail": "dataworks=scored/93.0"
+    },
+    "S01.excluded_company": {
+      "passed": true,
+      "detail": "shady=excluded/None shady_requests=0"
+    },
+    "S01.missing_jd_not_rejected": {
+      "passed": true,
+      "detail": "pixelforge=needs_jd/None"
+    },
+    "S01.ranking": {
+      "passed": true,
+      "detail": "register company order: ['Acme Cloud', 'DataWorks', 'PixelForge', 'ShadyStaffing Ltd']"
+    },
+    "S01.no_stage_changes": {
+      "passed": true,
+      "detail": "applications=0 approvals=0 expected"
+    },
+    "S01.decision_log_complete": {
+      "passed": true,
+      "detail": "13 step rows for 13 steps; missing fields: []"
+    },
+    "S02.uid_duplicate_skipped": {
+      "passed": true,
+      "detail": "counters={'emails_scanned': 2, 'emails_processed': 1, 'emails_duplicate': 1, 'jobs_new': 1, 'jobs_seen': 3, 'jobs_evaluated': 1, 'reply_proposals': 0, 'injection_events': 0}"
+    },
+    "S02.one_new_job": {
+      "passed": true,
+      "detail": "jobs_new=1 total_jobs=5"
+    },
+    "S02.alert_duplicates_merged": {
+      "passed": true,
+      "detail": "sources acme=2 dataworks=2"
+    },
+    "S02.no_reevaluation_noise": {
+      "passed": true,
+      "detail": "evaluation rows acme/dataworks/cloudnine = [1, 1, 1]"
+    },
+    "S02.no_refetch": {
+      "passed": true,
+      "detail": "JD requests acme/dataworks before=(1, 1) after=(1, 1)"
+    },
+    "S03.process_death_marks_run_interrupted": {
+      "passed": true,
+      "detail": "child exit=137 (137 = os._exit) running-before=['4ccb919705c7'] recovered=['4ccb919705c7'] status-after=interrupted"
+    },
+    "S03.no_duplicate_jobs_after_persist_crash": {
+      "passed": true,
+      "detail": "jobs=4 emails=1 all_evaluated=True"
+    },
+    "S03.crash_before_persist_loses_nothing": {
+      "passed": true,
+      "detail": "child exit=137; snapshots stored by the dead process=0; after restart acme snapshots=1 usable=True; duplicate (job,kind) groups=[]"
+    },
+    "S03.mailbox_cursor_not_advanced_early": {
+      "passed": true,
+      "detail": "crashed=True cursor_rows_after_crash=0 re-read processed=1 cursor_after_restart=1 readonly_select=True"
+    },
+    "S03.end_state_equals_uninterrupted": {
+      "passed": true,
+      "detail": "crash+restart=[('Acme Cloud', 'Backend Python Engineer', 'scored', 100.0), ('DataWorks', 'Senior Python Developer', 'scored', 93.0), ('PixelForge', 'Frontend React Developer', 'needs_jd', None), ('ShadyStaffing Ltd', 'Python Developer', 'excluded', None)] uninterrupted=[('Acme Cloud', 'Backend Python Engineer', 'scored', 100.0), ('DataWorks', 'Senior Python Developer', 'scored', 93.0), ('PixelForge', 'Frontend React Developer', 'needs_jd', None), ('ShadyStaffing Ltd', 'Python Developer', 'excluded', None)]"
+    },
+    "S03.crash_before_export": {
+      "passed": true,
+      "detail": "child exit=137 workbook existed after crash=False; after restart rows=4"
+    },
+    "S04.history_preserved": {
+      "passed": true,
+      "detail": "history=[('preferred_arrangements', 'remote,hybrid', 'remote', 'I only want fully remote roles now'), ('excluded_companies', 'ShadyStaffing', 'ShadyStaffing,Acme Cloud', 'no longer interested in Acme')]"
+    },
+    "S04.old_evaluation_retained": {
+      "passed": true,
+      "detail": "dataworks evaluation rows (id,prefs_version,status,total)=[(2, 0, 'scored', 93.0), (7, 1, 'scored', 87.0), (12, 2, 'scored', 87.0)]"
+    },
+    "S04.score_changes_after_correction": {
+      "passed": true,
+      "detail": "total 93.0 -> 87.0; arrangement component 1.0 -> 0.6"
+    },
+    "S04.exclusion_applies_next_run": {
+      "passed": true,
+      "detail": "acme evaluation statuses oldest-first=['scored', 'scored', 'excluded']"
+    },
+    "S04.unaffected_job_unchanged": {
+      "passed": true,
+      "detail": "cloudnine total before=80.0 after (a)=80.0 after (b)=80.0"
+    },
+    "S05.separate_jobs": {
+      "passed": true,
+      "detail": "sam=[1, 2, 3, 4] riley=[5, 6, 7, 8]"
+    },
+    "S05.different_decisions": {
+      "passed": true,
+      "detail": "acme: sam=scored riley=excluded"
+    },
+    "S05.cross_profile_read_refused": {
+      "passed": true,
+      "detail": "[('require_job', 'refused'), ('stage change', 'refused'), ('evaluate', 'refused'), ('approval', 'refused'), ('get_job(profile)', 'refused')]"
+    },
+    "S05.db_blocks_cross_profile_insert": {
+      "passed": true,
+      "detail": "[('applications insert', 'IntegrityError: profile isolation: application profile does not own job'), ('evaluation insert', 'IntegrityError: profile isolation: evaluation profile does not own job')]"
+    },
+    "S05.excel_only_own_rows": {
+      "passed": true,
+      "detail": "sam file ids=[1, 2, 3, 4] riley file ids=[5, 6, 7, 8]"
+    },
+    "S05.pref_change_isolated": {
+      "passed": true,
+      "detail": "sam prefs_version 0->0, sam evaluations 4->4"
+    },
+    "S06.conflicts_recorded": {
+      "passed": true,
+      "detail": "open conflicts=[('arrangement', 'remote', 'first_seen', 'onsite', 'email#2 digest@jobboard-three.example'), ('salary', 'GBP 60,000 - 75,000 a year', 'first_seen', 'GBP 40,000 a year', 'email#2 digest@jobboard-three.example'), ('location', 'Remote (UK)', 'first_seen', 'London (On-site)', 'email#2 digest@jobboard-three.example')]"
+    },
+    "S06.not_silently_resolved": {
+      "passed": true,
+      "detail": "arrangement=remote uncertain=['arrangement', 'location', 'salary'] sources=2"
+    },
+    "S06.evaluation_flags_conflict": {
+      "passed": true,
+      "detail": "flags=['salary_conflict', 'open_conflict:arrangement', 'open_conflict:location', 'open_conflict:salary']"
+    },
+    "S06.next_action_resolve": {
+      "passed": true,
+      "detail": "next action: 'Resolve conflicting job details before deciding'"
+    },
+    "S06.email_vs_jd_flag": {
+      "passed": true,
+      "detail": "dataworks flags=['open_conflict:arrangement'] (stored arrangement=hybrid; see report note: the flag here may come from email-vs-email evidence, the pure email-vs-JD case is in the pytest suite)"
+    },
+    "S06.wrong_company_page_rejected": {
+      "passed": true,
+      "detail": "snapshot verification=mismatch (title_similarity=1.00 (found 'Data Engineer'), company_in_page=False; the page n); job=needs_jd/None"
+    },
+    "S06.excel_conflicts_sheet": {
+      "passed": true,
+      "detail": "Conflicts sheet Acme rows=[('arrangement', 'remote', 'onsite'), ('salary', 'GBP 60,000 - 75,000 a year', 'GBP 40,000 a year'), ('location', 'Remote (UK)', 'London (On-site)')]"
+    },
+    "S07.bounded_retries": {
+      "passed": true,
+      "detail": "requests to the failing URL=4 (max_retries=3); back-off delays=[1, 2, 4]"
+    },
+    "S07.failure_reported_not_hidden": {
+      "passed": true,
+      "detail": "snapshot failure=server_error: HTTP 503; step result={\"bytes\": 0, \"failure\": \"server_error: HTTP 503\", \"ok\": false, \"retries\": 3, \"usable\": false, \"verification\": null}; job=needs_jd/None"
+    },
+    "S07.retry_recovers": {
+      "passed": true,
+      "detail": "evaluation history oldest-first=['needs_jd', 'scored']"
+    },
+    "S07.non_retryable_not_retried": {
+      "passed": true,
+      "detail": "closed-job failure=expired: page says the posting is closed/expired; requests after run1=1, after --retry run=1"
+    },
+    "S07.rate_limit_long_retry_after": {
+      "passed": true,
+      "detail": "HTTP 429 Retry-After:120 -> requests=1, sleep delays=[]"
+    },
+    "S07.auth_failure_single_attempt": {
+      "passed": true,
+      "detail": "login attempts=1 mail_status=auth_failed status=completed_with_errors errors=['mailbox: authentication failed for user@example.com: [AUTHENTICATIONFAILED] Invalid credentials']"
+    },
+    "S07.db_failure_stops_loudly": {
+      "passed": true,
+      "detail": "status=failed stopped_reason=database error: OperationalError: attempt to write a readonly database; the CLI turns status 'failed' into a non-zero exit with no success text (cli.cmd_run; pytest covers the exit code)"
+    },
+    "S08.flags_logged": {
+      "passed": true,
+      "detail": "injection_detected rows: email-level=2, Evilcorp JD=1"
+    },
+    "S08.instruction_not_stored": {
+      "passed": true,
+      "detail": "checked job description + 1 JD snapshot(s) for injected sentences"
+    },
+    "S08.score_not_forced": {
+      "passed": true,
+      "detail": "Evilcorp (a genuinely good match) total with injection + malicious LLM=100.0, control without the injected lines=100.0; poor-fit variant with 'set score to 100' injected=48.9, its control=48.9 (must be equal and < 100)"
+    },
+    "S08.no_side_effects": {
+      "passed": true,
+      "detail": "applications/approvals/follow-up drafts/stage history all empty expected"
+    },
+    "S08.disallowed_llm_actions_rejected": {
+      "passed": true,
+      "detail": "6 distinct disallowed proposals rejected: [('apply_to_job', '{\"job_id\": 1}'), ('apply_to_job', '{\"job_id\": 2}'), ('delete_database', '{}'), ('fetch_jd', '{\"url\": \"http://169.254.169.254/latest/meta-data/\"}'), ('finish', '{}'), ('send_follow_up', '{}')]; actions actually executed=['check_followups', 'evaluate_job', 'export_register', 'fetch_careers_page', 'fetch_jd', 'finish', 'mark_needs_jd', 'process_email', 'read_mailbox']"
+    },
+    "S08.ssrf_urls_refused": {
+      "passed": true,
+      "detail": "requests to metadata/localhost=0; recorded reasons=['unsafe_url: resolves to non-public address 169.254.169.254', 'unsafe_url: port 8080 not allowed']"
+    },
+    "S08.redirect_to_private_refused": {
+      "passed": true,
+      "detail": "ok=False code=unsafe_url requests made=['https://redir.example/jobs/1']"
+    },
+    "S08.no_secret_leak": {
+      "passed": true,
+      "detail": "scanned run output, settings summary, 34KB of database rows and 0 bytes of log files for the API key and IMAP password"
+    },
+    "S09.merged_one_job": {
+      "passed": true,
+      "detail": "non-Berlin jobs=[(1, 'Orbit Labs', 'London (Hybrid)')] sources=[2]"
+    },
+    "S09.other_city_separate": {
+      "passed": true,
+      "detail": "jobs=[(2, 'Orbit Labs', 'Berlin (On-site)'), (1, 'Orbit Labs', 'London (Hybrid)')]"
+    },
+    "S09.one_evaluation_for_merged": {
+      "passed": true,
+      "detail": "evaluations=1 excel rows for it=1"
+    },
+    "S09.gap_filled_not_conflict": {
+      "passed": true,
+      "detail": "arrangement=hybrid type=fulltime conflicts=[]"
+    },
+    "S10.waiting_period": {
+      "passed": true,
+      "detail": "{'eligible': False, 'code': 'waiting_period', 'reason': 'wait 7 days after applying', 'due_at': '2026-10-29T13:53:22+00:00'}"
+    },
+    "S10.eligible_after_wait": {
+      "passed": true,
+      "detail": "{'eligible': True, 'code': 'eligible', 'reason': 'applied 2026-10-22 with no reply after 7+ days', 'due_at': '2026-10-29T13:53:22+00:00'}"
+    },
+    "S10.reply_suppresses_followup": {
+      "passed": true,
+      "detail": "last_reply_at=2026-10-10T09:30:00+00:00 pending proposals=1 stage=applied eligibility=recruiter_replied"
+    },
+    "S10.stage_needs_approval": {
+      "passed": true,
+      "detail": "agent blocked=True; after approval stage=replied; last history=applied->replied by approval evidence='email #3 from recruiter@acme.example (Acme Cloud): Re: Your '; second decide executed=False"
+    },
+    "S10.interview_and_terminal": {
+      "passed": true,
+      "detail": "interview_in_progress then terminal_rejected"
+    },
+    "S10.draft_is_not_send": {
+      "passed": true,
+      "detail": "drafted=True sent_at after draft=None / after approving=None approval result sent=False; files containing mail-sending code=[]"
+    },
+    "S10.already_followed_up": {
+      "passed": true,
+      "detail": "7 days after sending: already_followed_up; 15 days after: eligible"
+    },
+    "S10.unapplied_not_eligible": {
+      "passed": true,
+      "detail": "stage=saved not_applied"
+    },
+    "M1_saved_exclusion_rule": {
+      "passed": true,
+      "detail": "memory ON: excluded, score=None, JD requests=0 | memory OFF: scored, score=100.0, JD requests=1 | expected different"
+    },
+    "M4_honest_same_result": {
+      "passed": true,
+      "detail": "memory ON: 100.0 | memory OFF: 100.0 | expected same"
+    },
+    "M2_corrected_preference": {
+      "passed": true,
+      "detail": "memory ON: score 93.0 -> 87.0; evaluation rows=2; history rows=1 | memory OFF: score 93.0; evaluation rows=1; history rows=0 | expected different"
+    },
+    "M3_reply_changes_followup": {
+      "passed": true,
+      "detail": "memory ON: eligible=False (recruiter_replied) | memory OFF: eligible=True (eligible) | expected different"
+    },
+    "M5_processed_email_memory": {
+      "passed": true,
+      "detail": "memory ON: re-delivered email -> new jobs=0 duplicates skipped=1 | memory OFF: same email, no memory -> new jobs=4 | expected different"
+    },
+    "LS.good_above_poor": {
+      "passed": true,
+      "detail": "good scores=[100.0, 93.0]; scored 'poor' scores=[60.0, 68.5, 66.0]"
+    },
+    "LS.poor_low_or_excluded": {
+      "passed": true,
+      "detail": "L03=scored/60.0; L04=scored/68.5; L05=excluded/None; L07=excluded/None; L09=scored/66.0"
+    },
+    "LS.unknown_jd_needs_jd": {
+      "passed": true,
+      "detail": "L10=needs_jd/None"
+    },
+    "LS.exclusion_wins": {
+      "passed": true,
+      "detail": "L07 (excluded company, perfect skills)=excluded/None"
+    },
+    "LS.borderline_reported": {
+      "passed": true,
+      "detail": "borderline (not counted right/wrong): L06=scored/80.0; L08=scored/80.0"
+    },
+    "F01.crash_matrix": {
+      "passed": true,
+      "detail": "mail_read: ok (crashed=True, evals/job=[1, 1, 1, 1], dup snapshots=0) | email_parsed_before_persist: ok (crashed=True, evals/job=[1, 1, 1, 1], dup snapshots=0) | email_persisted_before_checkpoint: ok (crashed=True, evals/job=[1, 1, 1, 1], dup snapshots=0) | jd_fetched_before_persist: ok (crashed=True, evals/job=[1, 1, 1, 1], dup snapshots=0) | evaluated_before_checkpoint: ok (crashed=True, evals/job=[1, 1, 1, 1], dup snapshots=0) | step_logged_before_checkpoint: ok (crashed=True, evals/job=[1, 1, 1, 1], dup snapshots=0) | before_export: ok (crashed=True, evals/job=[1, 1, 1, 1], dup snapshots=0)"
+    },
+    "F02.garbage_llm_falls_back": {
+      "passed": true,
+      "detail": "status=completed_with_errors decisions={'llm': 0, 'deterministic': 4, 'single_option': 6, 'fallback': 3} scores equal baseline=True"
+    },
+    "F03.llm_outage_circuit_breaker": {
+      "passed": true,
+      "detail": "circuit_breaker rows=1, llm_error rows=3, status=completed_with_errors, errors=['LLM unavailable (timeout); continuing in deterministic mode'], scores equal baseline=True"
+    },
+    "F04.no_mailbox_configured": {
+      "passed": true,
+      "detail": "mail_status=no_mailbox_configured jobs=0 status=completed_with_errors errors=['no mailbox configured (set IMAP_USER/IMAP_PASSWORD or use --fixtures): nothing was read']"
+    },
+    "F05.locked_export_fallback": {
+      "passed": true,
+      "detail": "fallback file=jobledger_register_p1_20261022T135324+0000.xlsx; original untouched=True; warnings=['jobledger_register_p1.xlsx is locked (open in Excel?); wrote jobledger_register_p1_20261022T135324+0000.xlsx instead']"
+    }
+  },
+  "extra": {
+    "memory": {
+      "M1_saved_exclusion_rule": {
+        "on": "excluded, score=None, JD requests=0",
+        "off": "scored, score=100.0, JD requests=1",
+        "expect": "different"
+      },
+      "M4_honest_same_result": {
+        "on": 100.0,
+        "off": 100.0,
+        "expect": "same"
+      },
+      "M2_corrected_preference": {
+        "on": "score 93.0 -> 87.0; evaluation rows=2; history rows=1",
+        "off": "score 93.0; evaluation rows=1; history rows=0",
+        "expect": "different"
+      },
+      "M3_reply_changes_followup": {
+        "on": "eligible=False (recruiter_replied)",
+        "off": "eligible=True (eligible)",
+        "expect": "different"
+      },
+      "M5_processed_email_memory": {
+        "on": "re-delivered email -> new jobs=0 duplicates skipped=1",
+        "off": "same email, no memory -> new jobs=4",
+        "expect": "different"
+      }
+    },
+    "labeled": [
+      {
+        "key": "L01",
+        "title": "Backend Python Engineer",
+        "company": "Acme Cloud",
+        "label": "good",
+        "status": "scored",
+        "total": 100.0,
+        "rationale": "Every required skill is in the CV, years requirement is below the candidate's 4, remote and full-time and salary above the minimum."
+      },
+      {
+        "key": "L02",
+        "title": "Senior Python Developer",
+        "company": "DataWorks",
+        "label": "good",
+        "status": "scored",
+        "total": 93.0,
+        "rationale": "All required skills match and location/hybrid/full-time/salary fit; the 5-year ask is a one-year stretch, which is normal for a good application."
+      },
+      {
+        "key": "L03",
+        "title": "Frontend React Developer",
+        "company": "PixelForge",
+        "label": "poor",
+        "status": "scored",
+        "total": 60.0,
+        "rationale": "Logistics fit perfectly but none of the required skills (React, TypeScript, CSS, Webpack) are on the CV."
+      },
+      {
+        "key": "L04",
+        "title": "Python Developer (Contract)",
+        "company": "FinServe",
+        "label": "poor",
+        "status": "scored",
+        "total": 68.5,
+        "rationale": "Skills match, but it is contract (candidate wants full-time), fully on-site, and in another city (candidate wants remote or hybrid in London)."
+      },
+      {
+        "key": "L05",
+        "title": "Junior Data Analyst",
+        "company": "Insightly",
+        "label": "poor",
+        "status": "excluded",
+        "total": null,
+        "rationale": "Salary of 32k is under the 45k minimum and the core skills (SQL/Excel/Tableau) barely overlap; it is a step down in seniority."
+      },
+      {
+        "key": "L06",
+        "title": "DevOps Engineer",
+        "company": "CloudNine",
+        "label": "borderline",
+        "status": "scored",
+        "total": 80.0,
+        "rationale": "AWS, Docker and Python are shared, but Terraform and Kubernetes are missing and it is a different career track; reasonable people would split."
+      },
+      {
+        "key": "L07",
+        "title": "Python Developer",
+        "company": "ShadyStaffing Ltd",
+        "label": "poor",
+        "status": "excluded",
+        "total": null,
+        "rationale": "Perfect on paper but the candidate has explicitly excluded this company; an exclusion rule must win over a good skills match."
+      },
+      {
+        "key": "L08",
+        "title": "Full Stack Developer",
+        "company": "Brightside",
+        "label": "borderline",
+        "status": "scored",
+        "total": 80.0,
+        "rationale": "Half of the required stack (Python, Django) is a match and half (JavaScript, React) is not; plausible stretch role."
+      },
+      {
+        "key": "L09",
+        "title": "Machine Learning Engineer",
+        "company": "NeuralWorks",
+        "label": "poor",
+        "status": "scored",
+        "total": 66.0,
+        "rationale": "Only Python overlaps; PyTorch, TensorFlow and MLOps are the substance of the role and the candidate has no ML experience."
+      },
+      {
+        "key": "L10",
+        "title": "Backend Engineer (Python)",
+        "company": "Quill and Co",
+        "label": "unknown_jd",
+        "status": "needs_jd",
+        "total": null,
+        "rationale": "Title and city fit but there is no description at all. The correct outcome is NEEDS_JD / a clearly-marked provisional score, never a rejection."
+      }
+    ]
+  }
+}

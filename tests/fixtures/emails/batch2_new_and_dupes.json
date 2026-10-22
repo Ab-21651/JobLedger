@@ -1,0 +1,9 @@
+[
+  {
+    "uid": "fx-b2-1",
+    "sender": "digest@jobboard-two.example",
+    "subject": "New jobs matching your search",
+    "received_at": "2026-10-03T08:00:00+00:00",
+    "body_text": "New jobs matching your search\n\n1. Backend Python Engineer\nAcme Cloud - Remote (UK)\nFull-time | GBP 60,000 - 75,000 a year\nApply: https://careers.acme.example/jobs/101?utm_source=digest&ref=email\n\n2. Senior Python Developer\nDataWorks - London (Hybrid)\nFull-time | GBP 70,000 - 85,000 a year\nApply: https://jobs.dataworks.example/py-senior?source=digest\n\n3. DevOps Engineer\nCloudNine - Remote\nFull-time | GBP 65,000 a year\nApply: https://cloudnine.example/careers/devops\n"
+  }
+]

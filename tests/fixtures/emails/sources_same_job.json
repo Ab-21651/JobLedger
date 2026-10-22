@@ -1,0 +1,23 @@
+[
+  {
+    "uid": "fx-s-1",
+    "sender": "alerts@jobboard-one.example",
+    "subject": "Job alert: Platform roles",
+    "received_at": "2026-10-06T09:00:00+00:00",
+    "body_text": "1. Platform Engineer\nOrbit Labs - London (Hybrid)\nFull-time | GBP 80,000 a year\nApply: https://orbit.example/jobs/platform?utm_source=boardone\n"
+  },
+  {
+    "uid": "fx-s-2",
+    "sender": "digest@jobboard-two.example",
+    "subject": "New jobs matching your search",
+    "received_at": "2026-10-06T10:00:00+00:00",
+    "body_text": "1. Platform Engineer\nOrbit Labs Ltd - London\nApply: https://orbit.example/jobs/platform?ref=boardtwo&gclid=zzz\n"
+  },
+  {
+    "uid": "fx-s-3",
+    "sender": "digest@jobboard-three.example",
+    "subject": "Hiring now: roles near you",
+    "received_at": "2026-10-06T11:00:00+00:00",
+    "body_text": "1. Platform Engineer\nOrbit Labs - Berlin (On-site)\nFull-time\nApply: https://orbit.example/jobs/platform-berlin\n"
+  }
+]

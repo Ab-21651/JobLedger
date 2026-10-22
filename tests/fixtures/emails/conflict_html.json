@@ -1,0 +1,10 @@
+[
+  {
+    "uid": "fx-c-1",
+    "sender": "digest@jobboard-three.example",
+    "subject": "Hiring now: roles near you",
+    "received_at": "2026-10-04T10:00:00+00:00",
+    "body_text": "",
+    "body_html": "<html><body><h2>Roles near you</h2>\n<table><tr><td>\n<p><b>Backend Python Engineer</b></p>\n<p>ACME Cloud Ltd - London (On-site)</p>\n<p>Full-time | GBP 40,000 a year</p>\n<p><a href=\"https://digest.jobboard-three.example/view/884?trk=abc\">View job</a></p>\n</td></tr><tr><td>\n<p><b>Senior Python Developer</b></p>\n<p>DataWorks - London (On-site)</p>\n<p>Full-time | GBP 70,000 - 85,000 a year</p>\n<p><a href=\"https://digest.jobboard-three.example/view/885?trk=def\">View job</a></p>\n</td></tr></table>\n<p><a href=\"https://digest.jobboard-three.example/unsub\">Unsubscribe</a></p>\n</body></html>"
+  }
+]

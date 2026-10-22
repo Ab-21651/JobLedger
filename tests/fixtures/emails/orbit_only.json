@@ -1,0 +1,9 @@
+[
+  {
+    "uid": "fx-o-1",
+    "sender": "alerts@jobboard-one.example",
+    "subject": "Job alert: Platform roles",
+    "received_at": "2026-10-06T09:00:00+00:00",
+    "body_text": "1. Platform Engineer\nOrbit Labs - London (Hybrid)\nFull-time | GBP 80,000 a year\nApply: https://orbit.example/jobs/platform\n"
+  }
+]

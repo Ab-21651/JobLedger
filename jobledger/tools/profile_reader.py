@@ -1,6 +1,8 @@
-"""
-Tool D: Profile and Preference Reader
-Reads active candidate profile, CV version, and preferences from SQLite.
+"""Tool D - Profile and Preference Reader.
+
+Every read is scoped by profile_id; nothing here can return another profile's rows.
+CVs and preferences are versioned (cv_versions rows are never overwritten; every
+preference change is a preferences_history row with old/new value, reason, timestamp).
 """
 from __future__ import annotations
 
@@ -12,100 +14,72 @@ from jobledger.db import queries as q
 
 
 @dataclass
-class CandidateProfile:
-    profile_id: int
-    name: str
-    email: str
-    location: Optional[str]
-    work_authorization: Optional[str]
-    preferred_arrangements: list[str]
-    preferred_types: list[str]
-    excluded_companies: list[str]
-    excluded_keywords: list[str]
-    min_salary: Optional[float]
-    currency: str
-    notes: Optional[str]
-
-
-@dataclass
 class CVInfo:
-    cv_id: int
+    id: int
     version_label: str
-    content_text: str
-    skills: list[str]
+    skills: list
     experience_years: Optional[float]
     education: Optional[str]
+    content_text: str
 
 
 @dataclass
 class FullProfile:
-    profile: CandidateProfile
+    id: int
+    name: str
+    email: str
+    location: Optional[str]
+    work_authorization: Optional[str]
+    preferred_arrangements: list
+    preferred_types: list
+    excluded_companies: list
+    excluded_keywords: list
+    min_salary: Optional[float]
+    currency: Optional[str]
     cv: Optional[CVInfo]
-    preferences_history: list[dict]
+    prefs_version: int = 0
+    notes: Optional[str] = None
+
+    def preference_snapshot(self) -> dict:
+        """Everything an evaluation depends on from the profile (used for input hashing)."""
+        return {
+            "location": (self.location or "").lower(), "work_authorization": (self.work_authorization or "").lower(),
+            "arrangements": sorted(self.preferred_arrangements), "types": sorted(self.preferred_types),
+            "excluded_companies": sorted(self.excluded_companies), "excluded_keywords": sorted(self.excluded_keywords),
+            "min_salary": self.min_salary, "currency": (self.currency or "").upper(),
+        }
 
 
-def _split_csv(value: Optional[str]) -> list[str]:
-    if not value:
-        return []
-    return [s.strip() for s in value.split(",") if s.strip()]
+def split_list(value: Optional[str]) -> list:
+    return [x.strip().lower() for x in (value or "").split(",") if x.strip()]
 
 
-def read_full_profile(
-    conn: sqlite3.Connection, profile_id: int
-) -> Optional[FullProfile]:
-    """Read profile + active CV + last 20 preference changes."""
+def read_full_profile(conn: sqlite3.Connection, profile_id: int) -> Optional[FullProfile]:
     row = q.get_profile(conn, profile_id)
     if row is None:
         return None
-
-    profile = CandidateProfile(
-        profile_id=row["id"],
-        name=row["name"],
-        email=row["email"],
-        location=row["location"],
-        work_authorization=row["work_authorization"],
-        preferred_arrangements=_split_csv(row["preferred_arrangements"]),
-        preferred_types=_split_csv(row["preferred_types"]),
-        excluded_companies=_split_csv(row["excluded_companies"]),
-        excluded_keywords=_split_csv(row["excluded_keywords"]),
-        min_salary=row["min_salary"],
-        currency=row["currency"] or "USD",
-        notes=row["notes"],
-    )
-
     cv_row = q.get_active_cv(conn, profile_id)
     cv = None
-    if cv_row:
-        cv = CVInfo(
-            cv_id=cv_row["id"],
-            version_label=cv_row["version_label"],
-            content_text=cv_row["content_text"],
-            skills=_split_csv(cv_row["skills"]),
-            experience_years=cv_row["experience_years"],
-            education=cv_row["education"],
-        )
-
-    pref_rows = conn.execute(
-        "SELECT * FROM preferences_history WHERE profile_id=? ORDER BY changed_at DESC LIMIT 20",
-        (profile_id,),
-    ).fetchall()
-    pref_history = [dict(r) for r in pref_rows]
-
-    return FullProfile(profile=profile, cv=cv, preferences_history=pref_history)
+    if cv_row is not None:
+        cv = CVInfo(cv_row["id"], cv_row["version_label"],
+                    [s.strip() for s in (cv_row["skills"] or "").split(",") if s.strip()],
+                    cv_row["experience_years"], cv_row["education"], cv_row["content_text"] or "")
+    return FullProfile(
+        id=row["id"], name=row["name"], email=row["email"], location=row["location"],
+        work_authorization=row["work_authorization"],
+        preferred_arrangements=split_list(row["preferred_arrangements"]),
+        preferred_types=split_list(row["preferred_types"]),
+        excluded_companies=split_list(row["excluded_companies"]),
+        excluded_keywords=split_list(row["excluded_keywords"]),
+        min_salary=row["min_salary"], currency=row["currency"], cv=cv,
+        prefs_version=q.prefs_version(conn, profile_id), notes=row["notes"])
 
 
-def list_all_profiles(conn: sqlite3.Connection) -> list[dict]:
-    """List all active profiles with id, name, email."""
-    rows = q.list_profiles(conn)
-    return [{"id": r["id"], "name": r["name"], "email": r["email"]} for r in rows]
+def list_all_profiles(conn: sqlite3.Connection) -> list:
+    return [dict(r) for r in q.list_profiles(conn)]
 
 
-def read_preferences_history(
-    conn: sqlite3.Connection, profile_id: int, limit: int = 50
-) -> list[dict]:
-    """Return preference change history ordered by changed_at DESC."""
-    rows = conn.execute(
-        "SELECT * FROM preferences_history WHERE profile_id=? ORDER BY changed_at DESC LIMIT ?",
-        (profile_id, limit),
-    ).fetchall()
-    return [dict(r) for r in rows]
+def read_preferences_history(conn: sqlite3.Connection, profile_id: int, limit: int = 100) -> list:
+    return [dict(r) for r in conn.execute(
+        "SELECT * FROM preferences_history WHERE profile_id = ? ORDER BY id DESC LIMIT ?",
+        (profile_id, limit)).fetchall()]

@@ -1,0 +1,9 @@
+[
+  {
+    "uid": "fx-b1-1",
+    "sender": "alerts@jobboard-one.example",
+    "subject": "Job alert: 4 new jobs for you",
+    "received_at": "2026-10-01T09:00:00+00:00",
+    "body_text": "Your daily job alert\n\n1. Backend Python Engineer\nAcme Cloud - Remote (UK)\nFull-time | GBP 60,000 - 75,000 a year\nApply: https://careers.acme.example/jobs/101?utm_source=alert&utm_campaign=daily\n\n2. Senior Python Developer\nDataWorks - London (Hybrid)\nFull-time | GBP 70,000 - 85,000 a year\nApply: https://jobs.dataworks.example/py-senior\n\n3. Python Developer\nShadyStaffing Ltd - Remote\nFull-time | GBP 60,000 a year\nApply: https://shady.example/jobs/9\n\n4. Frontend React Developer\nPixelForge - Remote\nFull-time | GBP 55,000 - 65,000 a year\nApply: https://pixelforge.example/jobs/react\n\nUnsubscribe: https://jobboard-one.example/unsub\n"
+  }
+]
