@@ -1,0 +1,29 @@
+# Secrets
+.env
+*.env
+
+# Database
+*.db
+*.db-wal
+*.db-shm
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# Excel outputs
+exports/
+
+# Logs
+logs/
+
+# Test artifacts
+tests/fixtures/live/
+
+# OS
+.DS_Store
+Thumbs.db

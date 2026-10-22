@@ -1,0 +1,27 @@
+# JobLedger dependencies
+# Install with: py -m pip install -r requirements.txt
+
+# Core
+requests==2.32.4
+beautifulsoup4==4.12.3
+lxml==5.1.0
+httpx==0.28.1
+pydantic==2.12.5
+pydantic-settings==2.14.0
+python-dotenv==1.0.1
+openpyxl==3.1.5
+
+# LLM (litellm provides a unified interface to multiple providers)
+litellm==1.106.2
+openai==1.109.1
+
+# Email
+imapclient==4.1.0
+
+# CLI
+click==8.3.1
+rich==14.3.3
+typer==0.24.1
+
+# Testing
+pytest>=7.4.0
