@@ -1,0 +1,18 @@
+[
+  {
+    "uid": "fx-li-1",
+    "sender": "jobs-noreply@linkedin-digest.example",
+    "subject": "Jobs you may be interested in",
+    "received_at": "2026-10-20T08:00:00+00:00",
+    "body_text": "",
+    "body_html": "<html><body>\n<table>\n<tr><td><p><b>Expand your search</b></p></td></tr>\n<tr><td><p>Recommendations based on your activity.</p></td></tr>\n<tr><td><a href='https://www.linkedin.com/comm/jobs/view/4477706273/?trackingId=abc&amp;refId=x'></a></td></tr>\n<tr><td><p><b>AI Engineer (LLM &amp; Agentic AI)</b></p></td></tr>\n<tr><td><p>Edge · Islamabad (On-site)</p></td></tr>\n<tr><td><a href='https://www.linkedin.com/comm/jobs/view/4477706274/?trackingId=def&amp;refId=x'></a></td></tr>\n<tr><td><p><b>AI Solution Architect</b></p></td></tr>\n<tr><td><p>Systems Limited · Islamabad (On-site)</p></td></tr>\n<tr><td><a href='https://www.linkedin.com/comm/jobs/view/4477706275/?trackingId=ghi&amp;refId=x'></a></td></tr>\n<tr><td><p><b>Machine Learning Lead</b></p></td></tr>\n<tr><td><p>Jazz · Karachi (Remote)</p></td></tr>\n</table>\n<table>\n<tr><td><a href='https://www.linkedin.com/comm/jobs/search?keywords=ai'>View all jobs</a></td></tr>\n</table>\n<p>This email was intended for alerts@jobs.example.</p>\n<p><a href='https://www.linkedin.com/comm/settings/notifications'>Manage recommendations</a> · <a href='https://www.linkedin.com/comm/unsubscribe'>Unsubscribe</a> · <a href='https://www.linkedin.com/help'>Help</a></p>\n</body></html>"
+  },
+  {
+    "uid": "fx-li-2",
+    "sender": "jobs-noreply@linkedin-digest.example",
+    "subject": "Jobs you may be interested in",
+    "received_at": "2026-10-21T08:00:00+00:00",
+    "body_text": "",
+    "body_html": "<html><body>\n<table>\n<tr><td><p>Recommendations based on your activity.</p></td></tr>\n<tr><td><a href='https://www.linkedin.com/comm/jobs/view/4477800001/?trackingId=p1'><b>ML/AI Engineer</b></a></td></tr>\n<tr><td><p>Onex Group · Poland (Remote)</p></td></tr>\n<tr><td><a href='https://www.linkedin.com/comm/jobs/view/4477800002/?trackingId=p2'>🟠Data/AI engineer with Python🟠</a></td></tr>\n<tr><td><p>Test Yantra · Cracow (Hybrid)</p></td></tr>\n</table>\n<p>This email was intended for alerts@jobs.example.</p>\n<p><a href='https://www.linkedin.com/comm/settings/notifications'>Manage recommendations</a> · <a href='https://www.linkedin.com/comm/unsubscribe'>Unsubscribe</a> · <a href='https://www.linkedin.com/help'>Help</a></p>\n</body></html>"
+  }
+]

@@ -117,6 +117,7 @@ _HDR_RE = re.compile(r"^(from|to|cc|bcc|date|sent|subject|reply-to)\s*:", re.I)
 _BULLET_RE = re.compile(r"^\s*(?:[\-\*•·▪►>]+|\d{1,2}[.)])\s+")
 _ARR_MAP = {"remote": "remote", "work from home": "remote", "hybrid": "hybrid",
             "on-site": "onsite", "onsite": "onsite", "on site": "onsite", "in-office": "onsite", "in office": "onsite"}
+_INVISIBLE_RE = re.compile("[͏​-‏⁠﻿­]")   # padding used in hidden preheaders
 _LOC_RE = re.compile(r"^[A-Z][\w.'’\- ]+(?:,\s*[A-Z][\w.'’\- ]+){0,2}(?:\s*\((?:remote|hybrid|on-?site)[^)]*\))?$")
 
 
@@ -364,6 +365,74 @@ def _parse_block(block: list, email_warnings: list) -> Optional[ParsedJob]:
         description=description, evidence=evidence, confidence=conf, warnings=warns)
 
 
+_CARD_COMPANY_RE = re.compile(
+    r"^(?P<company>[^·•]{1,120}?)\s+[·•]\s+(?P<loc>[^·•]+?)(?:\s*\((?P<arr>remote|hybrid|on-?site)\))?$", re.I)
+
+
+def _card_jobs(lines: list) -> list:
+    """Fallback for LinkedIn-style digests, used only when blank-line blocks yield no job.
+
+    LinkedIn puts an empty line between every field, so block parsing sees one line per block.
+    A card is a title line directly followed by a 'Company · Location (Arrangement)' line.
+    A link-only line belongs to the next visible line; the apply URL is the first
+    '/jobs/view/' href collected since the previous card's company line.
+    """
+    entries, carry = [], []                    # (text, [(anchor, href)]) for visible lines only
+    for ln in lines:
+        if not ln.text:
+            carry.extend(ln.links)
+            continue
+        entries.append((ln.text, carry + list(ln.links)))
+        carry = []
+
+    jobs, seen = [], set()
+    window, i = 0, 0
+    while i + 1 < len(entries):
+        title_line = entries[i][0]
+        comp_line = entries[i + 1][0]
+        cm = _CARD_COMPANY_RE.match(comp_line)
+        if not cm or _UNSUB_RE.search(comp_line):
+            i += 1
+            continue
+        links = [lk for k in range(window, i + 1) for lk in entries[k][1]]
+        href = next((h for _, h in links if "/jobs/view/" in h.lower()), None)
+        window, i = i + 2, i + 2               # the company line is consumed, accepted or not
+
+        title = title_line.strip(" -|·•:")
+        company = cm.group("company").strip(" -|·•:")
+        location = cm.group("loc").strip() or None
+        if not title or not company or len(title) > 140 or len(company) > 120:
+            continue
+        if is_injection_line(title_line) or is_injection_line(comp_line):
+            continue
+
+        key = (title.lower(), company.lower(), (location or "").lower())
+        if key in seen:
+            continue
+        seen.add(key)
+
+        evidence = {"title": title_line, "company": comp_line}
+        conf = {"title": 0.85, "company": 0.85}
+        warns, url = [], None
+        if href:
+            url, w = normalize_url(href)
+            if w:
+                warns.append(w)
+            else:
+                evidence["apply_url"] = href[:200]
+                conf["apply_url"] = 0.9
+        if location:
+            evidence["location"] = comp_line
+            conf["location"] = 0.8
+        arrangement = _arrangement(comp_line)
+        if arrangement:
+            evidence["arrangement"] = comp_line
+            conf["arrangement"] = 0.8
+        jobs.append(ParsedJob(title=title, company=company, location=location, arrangement=arrangement,
+                              apply_url=url, evidence=evidence, confidence=conf, warnings=warns))
+    return jobs
+
+
 def parse_email(msg: EmailMessage) -> ParseResult:
     """Parse one email. Never raises on odd content; problems become warnings."""
     res = ParseResult()
@@ -372,9 +441,17 @@ def parse_email(msg: EmailMessage) -> ParseResult:
     if msg.body_html:
         h_lines, h_hidden = html_to_lines(msg.body_html)
     hidden = " | ".join(dict.fromkeys(x for x in (msg.hidden_text, h_hidden) if x))
-    if hidden:
-        flags.extend(detect_injection(hidden))
-        flags.append({"flag": "hidden_html_text", "excerpt": clean_line(hidden)[:160]})
+    # Hidden text is never job content. Harmless padding (invisible characters only) is ignored;
+    # hidden text with no instruction-like pattern is quarantined; instruction-like text is flagged.
+    hidden_visible = " | ".join(dict.fromkeys(
+        c for c in (" ".join(_INVISIBLE_RE.sub("", x).split()) for x in (msg.hidden_text, h_hidden)) if c))
+    if hidden_visible:
+        matches = detect_injection(hidden) or detect_injection(hidden_visible)
+        if matches:
+            flags.extend(matches)
+            flags.append({"flag": "hidden_html_text", "excerpt": clean_line(hidden)[:160]})
+        else:
+            res.warnings.append("hidden_text_quarantined")
     res.injection_flags = flags
 
     if msg.body_html:
@@ -399,6 +476,8 @@ def parse_email(msg: EmailMessage) -> ParseResult:
             continue
         seen.add(key)
         res.jobs.append(job)
+    if not res.jobs:                          # blank-line blocks found nothing: try LinkedIn-style cards
+        res.jobs = _card_jobs(lines)
     if not res.jobs:
         res.warnings.append("no_jobs_found")
     for j in res.jobs:
