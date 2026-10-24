@@ -25,7 +25,7 @@ Once the agent's LLM circuit breaker is open, no further extraction calls are at
 | experience | 0.20 | `min(1, CV years / required years)`; unknown if the JD or CV states none |
 | arrangement | 0.15 | 1.0 if preferred, otherwise a fixed table (e.g. hybrid vs wanting remote 0.6, onsite vs remote 0.1) |
 | employment type | 0.10 | 1.0 if preferred, 0.1 otherwise |
-| location | 0.15 | 1.0 remote / same city, 0.25 hybrid elsewhere, 0.1 onsite elsewhere |
+| location | 0.15 | 1.0 remote / same city; with a place-distance estimate (below) 1.0 within 30 km and 0.6 within 100 km; otherwise 0.25 hybrid elsewhere, 0.1 onsite elsewhere |
 
 `total = 100 × Σ weight × component`, rounded to one decimal.
 
@@ -50,6 +50,24 @@ or `none`. Guards, all in Python (`matcher.validate_coverage`):
 
 LLM-credited skills are shown in the rationale as *covered by CV evidence (AI-judged)* with the quoted evidence.
 Dropped claims are listed under `dropped_llm_items` in the score breakdown.
+
+### Place distance (eval version `v3`)
+
+"Same city or not" is too coarse: Islamabad and Rawalpindi are about 14 km apart. When an LLM is configured,
+the first time a pair of cities is seen one extra call asks for the approximate straight-line distance in km.
+Guards, all in Python (`matcher.validate_distance`, `matcher.resolve_distance_km`):
+
+* The reply must be `{"km": number, "confidence": "high|medium|low"}` with 0 ≤ km ≤ 20100. Booleans, strings,
+  missing fields and `low` confidence are rejected. A rejected reply gets one corrective retry with the reason,
+  and a rejected estimate is **not cached**, so the next run asks again. The LLM never outputs a score.
+* Place names are untrusted data inside a JSON object, capped at 80 characters each.
+* Valid estimates are cached in `place_distances` (global, keyed by the normalised city, usable in either
+  direction). Each pair costs at most one successful call, ever. Cached values are used even without an LLM.
+* Thresholds, fixed before use: ≤ 30 km scores 1.0 ("within commuting distance"); ≤ 100 km scores 0.6
+  ("same region"); anything further falls through to the table above. The note says "AI-estimated".
+* Remote jobs, same-city pairs, unknown locations, conflicted locations and candidates without a location make no call.
+* If the call fails or the reply stays unusable, the table is used and the evaluation carries `distance_llm_unavailable`.
+* The distance (rounded to 0.1 km) is part of the input hash, so a new estimate creates a new evaluation row.
 
 ## Unknowns are not mismatches
 

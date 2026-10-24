@@ -420,10 +420,26 @@ _MIGRATION_3_STATEMENTS = [
        BEGIN SELECT RAISE(ABORT, 'evaluations are append-only: history is never deleted'); END""",
 ]
 
+# --- v4: LLM-estimated distance between two places. A geographic fact, not profile data, so it is global ---
+_MIGRATION_4_STATEMENTS = [
+    """CREATE TABLE place_distances (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        from_place  TEXT NOT NULL,
+        to_place    TEXT NOT NULL,
+        km          REAL NOT NULL,
+        source      TEXT NOT NULL,
+        model       TEXT,
+        note        TEXT,
+        created_at  TEXT NOT NULL,
+        UNIQUE(from_place, to_place)
+    )""",
+]
+
 MIGRATIONS: list[tuple[int, list[str]]] = [
     (1, _split_statements(_MIGRATION_1_SQL)),
     (2, _MIGRATION_2_STATEMENTS),
     (3, _MIGRATION_3_STATEMENTS),
+    (4, _MIGRATION_4_STATEMENTS),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]

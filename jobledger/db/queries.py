@@ -841,3 +841,30 @@ def mark_followup_sent(conn, application_id: int, sent_at: str = None) -> None:
         fid = get_or_create_followup(conn, application_id)
         ts = sent_at or now()
         conn.execute("UPDATE follow_ups SET sent_at=?, updated_at=? WHERE id=?", (ts, now(), fid))
+
+
+# ---------------------------------------------------------------------------
+# Place distances (global: a fact about two places, not profile data). Keys are norm_city() values.
+# ---------------------------------------------------------------------------
+
+def get_place_distance(conn: sqlite3.Connection, a: str, b: str) -> Optional[float]:
+    """Cached km between two city keys, looked up in both directions. None when not cached."""
+    row = conn.execute(
+        """SELECT km FROM place_distances
+           WHERE (from_place = ? AND to_place = ?) OR (from_place = ? AND to_place = ?)
+           ORDER BY id LIMIT 1""",
+        (a, b, b, a)).fetchone()
+    return float(row["km"]) if row else None
+
+
+def save_place_distance(conn: sqlite3.Connection, a: str, b: str, km: float, source: str,
+                        model: Optional[str] = None, note: Optional[str] = None) -> bool:
+    """Cache one estimate. INSERT OR IGNORE: the first stored value for a pair is kept. True if inserted."""
+    if not a or not b:
+        raise ValueError("place keys must be non-empty normalised city names")
+    with tx(conn):
+        cur = conn.execute(
+            """INSERT OR IGNORE INTO place_distances (from_place, to_place, km, source, model, note, created_at)
+               VALUES (?,?,?,?,?,?,?)""",
+            (a, b, float(km), source, model, note, now()))
+    return cur.rowcount > 0
