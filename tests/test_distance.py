@@ -82,7 +82,7 @@ def test_rawalpindi_is_near_islamabad_only_with_the_estimate(ws):
 
 @pytest.mark.parametrize("km, expected, note", [
     (60, 0.6, "same region (~60 km, AI-estimated)"),
-    (400, 0.1, "job in lahore, candidate in islamabad (~400 km, AI-estimated)"),
+    (400, 0.1, "job in Lahore, candidate in Islamabad (~400 km, AI-estimated)"),
 ])
 def test_mid_and_far_distances(ws, km, expected, note):
     pid = _candidate(ws.conn, "Islamabad", "ali.mid@example.com")

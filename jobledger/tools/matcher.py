@@ -666,11 +666,13 @@ def score_location(job_loc: Optional[str], job_arr: Optional[str], my_loc: Optio
         return 1.0, "remote"
     if not my_loc:
         return 1.0, "no location preference"
-    jc, mc = norm_city(job_loc), norm_city(my_loc)
+    jc, mc = norm_city(job_loc), norm_city(my_loc)      # comparisons and cache keys: norm_city() only
     if not jc:
         return None, "job location not stated"
+    jl = _city_label(job_loc) or jc                     # notes: readable names (casing, diacritics)
+    ml = _city_label(my_loc) or mc
     if jc == mc:
-        return 1.0, f"same city ({jc})"
+        return 1.0, f"same city ({jl})"
     if distance_km is not None:          # AI-estimated, validated and cached (see resolve_distance_km)
         if distance_km <= NEAR_KM:
             return NEAR_SCORE, f"within commuting distance (~{distance_km:.0f} km, AI-estimated)"
@@ -678,8 +680,8 @@ def score_location(job_loc: Optional[str], job_arr: Optional[str], my_loc: Optio
             return REGION_SCORE, f"same region (~{distance_km:.0f} km, AI-estimated)"
     score = {"hybrid": 0.25, "onsite": 0.1}.get(job_arr or "", 0.3)
     if distance_km is None:
-        return score, f"job in {jc}, candidate in {mc}"
-    return score, f"job in {jc}, candidate in {mc} (~{distance_km:.0f} km, AI-estimated)"
+        return score, f"job in {jl}, candidate in {ml}"
+    return score, f"job in {jl}, candidate in {ml} (~{distance_km:.0f} km, AI-estimated)"
 
 
 # ---------------------------------------------------------------------------
