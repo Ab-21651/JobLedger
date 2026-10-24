@@ -79,6 +79,7 @@ Set `LLM_PROVIDER` (`openai | anthropic | groq | gemini | ollama | none`), `LLM_
 | `py -m jobledger jd N --url https://…` | fetch one public job page through the safe fetcher (LinkedIn is refused by policy) |
 | `py -m jobledger jd watch` | watch the clipboard; each copied posting is matched to one of your jobs and stored (Ctrl+C to stop) |
 | `py -m jobledger prefs set --set excluded_companies="X, Y" --reason "..."` | correct a preference (history kept) |
+| `py -m jobledger prefs set --set open_to_relocation=no` | not willing to move: far on-site/hybrid jobs are excluded (`yes` is the default) |
 | `py -m jobledger prefs history` | every preference change, old value → new value, reason |
 | `py -m jobledger applied N` / `stage N --to interview --evidence "..."` | **you** record what happened |
 | `py -m jobledger approvals list` / `approve ID` / `reject ID` | decide proposals the agent made (decide-once) |

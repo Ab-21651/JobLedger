@@ -225,7 +225,7 @@ def test_no_llm_writes_nothing(ws):
 # ---------------------------------------------------------------- storage and keys
 
 def test_migration_five_creates_llm_cache_and_init_reports_v5(ws):
-    assert schema.SCHEMA_VERSION == 5 and schema.current_version(ws.conn) == 5
+    assert schema.SCHEMA_VERSION == 6 and schema.current_version(ws.conn) == 6
     cols = {r["name"] for r in ws.conn.execute("PRAGMA table_info(llm_cache)")}
     assert cols == {"id", "profile_id", "kind", "cache_key", "payload", "provider", "model", "created_at"}
 

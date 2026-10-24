@@ -69,6 +69,18 @@ Guards, all in Python (`matcher.validate_distance`, `matcher.resolve_distance_km
 * If the call fails or the reply stays unusable, the table is used and the evaluation carries `distance_llm_unavailable`.
 * The distance (rounded to 0.1 km) is part of the input hash, so a new estimate creates a new evaluation row.
 
+## Willing to relocate (`open_to_relocation`)
+
+Default `yes` (or unset): no effect on any evaluation. With `no`, a `relocation` hard filter uses the place distance above:
+
+* remote job, or the same city (or a city not stated): pass.
+* distance not known (no cached estimate, no LLM): unknown, not excluded.
+* distance up to 100 km: pass.
+* more than 100 km and arrangement `hybrid` or `onsite`: **fail**, so the job is `excluded` with the reason in the rationale.
+* more than 100 km and arrangement not stated: unknown, not excluded, flagged `relocation_possibly_needed`.
+
+The preference is part of the input hash, and so is `prefs_version`, so switching back to `yes` creates a new evaluation.
+
 ## Unknowns are not mismatches
 
 A component that cannot be determined (no years stated, arrangement missing, **or an open source conflict

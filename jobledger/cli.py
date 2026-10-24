@@ -86,7 +86,8 @@ def cmd_profile(a):
         if q.get_profile_by_email(conn, a.email):
             raise CLIError(f"a profile with email {a.email} already exists")
         pid = q.create_profile(conn, a.name, a.email, None, a.location, a.work_auth, a.arrangements, a.types,
-                               a.exclude_companies, a.exclude_keywords, a.min_salary, a.currency, a.notes)
+                               a.exclude_companies, a.exclude_keywords, a.min_salary, a.currency, a.notes,
+                               a.relocation)
         out(f"created profile {pid} ({a.name})")
     elif a.sub == "list":
         for p in q.list_profiles(conn):
@@ -578,6 +579,8 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--min-salary", type=float)
     c.add_argument("--currency", default="USD")
     c.add_argument("--notes")
+    c.add_argument("--relocation", choices=["yes", "no"], default=None,
+                   help="willing to relocate for a job in another city/country (default: yes)")
     prs.add_parser("list")
     prs.add_parser("show")
     pr.set_defaults(fn=cmd_profile)

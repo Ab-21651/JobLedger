@@ -451,12 +451,18 @@ _MIGRATION_5_STATEMENTS = [
     )""",
 ]
 
+# --- v6: willingness to relocate (profile preference). NULL means 'yes', so existing profiles behave as before. ---
+_MIGRATION_6_STATEMENTS = [
+    "ALTER TABLE profiles ADD COLUMN open_to_relocation TEXT",
+]
+
 MIGRATIONS: list[tuple[int, list[str]]] = [
     (1, _split_statements(_MIGRATION_1_SQL)),
     (2, _MIGRATION_2_STATEMENTS),
     (3, _MIGRATION_3_STATEMENTS),
     (4, _MIGRATION_4_STATEMENTS),
     (5, _MIGRATION_5_STATEMENTS),
+    (6, _MIGRATION_6_STATEMENTS),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]

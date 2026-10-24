@@ -56,13 +56,24 @@ def _dumps(value: Any) -> Optional[str]:
 PROFILE_FIELDS = (
     "name", "phone", "location", "work_authorization", "preferred_arrangements",
     "preferred_types", "excluded_companies", "excluded_keywords", "min_salary",
-    "currency", "notes",
+    "currency", "notes", "open_to_relocation",
 )
 # Fields that count as "preferences" for versioning/evaluation hashing.
 PREFERENCE_FIELDS = (
     "location", "work_authorization", "preferred_arrangements", "preferred_types",
-    "excluded_companies", "excluded_keywords", "min_salary", "currency",
+    "excluded_companies", "excluded_keywords", "min_salary", "currency", "open_to_relocation",
 )
+RELOCATION_VALUES = ("yes", "no")
+
+
+def normalize_relocation(value: Optional[str]) -> Optional[str]:
+    """'yes' | 'no' (case-insensitive, stored lowercase). None stays None, which means 'yes'."""
+    if value is None:
+        return None
+    v = str(value).strip().lower()
+    if v not in RELOCATION_VALUES:
+        raise ValueError(f"open_to_relocation must be 'yes' or 'no', got {value!r}")
+    return v
 
 
 def create_profile(
@@ -71,18 +82,23 @@ def create_profile(
     preferred_arrangements: str = None, preferred_types: str = None,
     excluded_companies: str = None, excluded_keywords: str = None,
     min_salary: float = None, currency: str = "USD", notes: str = None,
+    open_to_relocation: str = None,
 ) -> int:
+    relocation = normalize_relocation(open_to_relocation)
     ts = now()
+    # The column is named only when a value is given: NULL (= 'yes') is the default and needs no column.
+    has_reloc = relocation is not None
+    reloc_col, reloc_ph = (", open_to_relocation", ",?") if has_reloc else ("", "")
     with tx(conn):
         cur = conn.execute(
-            """INSERT INTO profiles (name, email, phone, location, work_authorization,
+            f"""INSERT INTO profiles (name, email, phone, location, work_authorization,
                    preferred_arrangements, preferred_types, excluded_companies,
                    excluded_keywords, min_salary, currency, notes, is_active,
-                   created_at, updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)""",
+                   created_at, updated_at{reloc_col})
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,?,?{reloc_ph})""",
             (name, email, phone, location, work_authorization, preferred_arrangements,
              preferred_types, excluded_companies, excluded_keywords, min_salary,
-             currency, notes, ts, ts),
+             currency, notes, ts, ts, *([relocation] if has_reloc else [])),
         )
     return cur.lastrowid
 
@@ -110,6 +126,8 @@ def update_profile_fields(
     bad = [f for f in changes if f not in PROFILE_FIELDS]
     if bad:
         raise ValueError(f"Unknown or protected profile field(s): {bad}. Allowed: {list(PROFILE_FIELDS)}")
+    if "open_to_relocation" in changes:
+        changes = {**changes, "open_to_relocation": normalize_relocation(changes["open_to_relocation"])}
     applied: list[dict] = []
     ts = now()
     with tx(conn):

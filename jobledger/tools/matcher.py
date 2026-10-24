@@ -521,8 +521,29 @@ def resolve_distance_km(conn, my_loc: Optional[str], job_loc: Optional[str], llm
 # Hard filters  (confirmed mismatch vs missing evidence are distinguished)
 # ---------------------------------------------------------------------------
 
-def hard_filters(profile: FullProfile, job, jd_text: Optional[str], enabled: Optional[dict] = None) -> dict:
-    """Each rule -> {'result': 'pass'|'fail'|'unknown', 'detail': str}. Only 'fail' rejects."""
+def _relocation_rule(profile: FullProfile, job, distance_km: Optional[float], arrangement: Optional[str]) -> dict:
+    """Only for a candidate who answered relocation: no. Confirmed far on-site/hybrid work is a mismatch."""
+    if arrangement == "remote" or is_remote_location(job["location"]):
+        return {"result": "pass", "detail": "remote job"}
+    jc, mc = norm_city(job["location"]), norm_city(profile.location)
+    if not jc or not mc or jc == mc:
+        return {"result": "pass", "detail": "same city, or a city is not stated: no move implied"}
+    where = _city_label(job["location"]) or jc
+    if distance_km is None:
+        return {"result": "unknown", "detail": f"distance to {where} not known"}
+    if distance_km <= REGION_KM:
+        return {"result": "pass", "detail": f"~{distance_km:.0f} km, within reach"}
+    if arrangement in ("hybrid", "onsite"):
+        return {"result": "fail", "detail": f"requires relocation: job in {where} is ~{distance_km:.0f} km away "
+                                            f"and you set relocation: no"}
+    return {"result": "unknown", "detail": f"arrangement not stated; ~{distance_km:.0f} km away - may need relocation"}
+
+
+def hard_filters(profile: FullProfile, job, jd_text: Optional[str], enabled: Optional[dict] = None,
+                 distance_km: Optional[float] = None, arrangement: Optional[str] = None) -> dict:
+    """Each rule -> {'result': 'pass'|'fail'|'unknown', 'detail': str}. Only 'fail' rejects.
+    distance_km: the place distance already resolved by evaluate_job. arrangement: the effective job arrangement
+    (email, else JD); defaults to the job row's value."""
     on = {"excluded_company": True, "excluded_keyword": True, "salary_below_min": True,
           "strict_arrangement": False, "strict_type": False}
     on.update(enabled or {})
@@ -564,6 +585,10 @@ def hard_filters(profile: FullProfile, job, jd_text: Optional[str], enabled: Opt
         m = re.search(r"(?:must|need to)\s+(?:be\s+)?(?:legally\s+)?(?:authori[sz]ed|eligible|permitted)\s+to\s+work\s+in\s+(?:the\s+)?([A-Za-z ]{2,30}?)(?:[.,;]|$|\s+(?:and|without))", jd_text, re.I)
         if m and wa.lower() not in m.group(1).lower() and m.group(1).strip().lower() not in wa.lower():
             out["work_authorization"] = {"result": "unknown", "detail": f"JD requires authorisation in '{m.group(1).strip()}', profile says '{wa}': NEEDS CONFIRMATION (not auto-rejected)"}
+
+    if profile.open_to_relocation == "no":          # absent for everyone who did not answer 'no': unchanged breakdowns
+        out["relocation"] = _relocation_rule(profile, job, distance_km,
+                                             arrangement if arrangement is not None else job["arrangement"])
     return out
 
 
@@ -715,7 +740,7 @@ def compute_input_hash(profile: FullProfile, job, jd_snapshot, weights: dict, wa
                 job["salary_min"], job["salary_max"], job["salary_currency"], job["uncertain_fields"]],
         "jd": (jd_snapshot["content_hash"], jd_snapshot["verification_status"]) if jd_snapshot is not None else None,
         "cv": [profile.cv.id, profile.cv.skills, profile.cv.experience_years] if profile.cv else None,
-        "prefs": profile.preference_snapshot(), "ver": EVAL_VERSION, "w": weights,
+        "prefs": profile.preference_snapshot(), "pv": profile.prefs_version, "ver": EVAL_VERSION, "w": weights,
         "hf": hard_filter_cfg or {}, "llm": bool(want_llm),
         "dist": None if distance_km is None else round(float(distance_km), 1),
     }
@@ -800,8 +825,6 @@ def evaluate_job(conn, profile: FullProfile, job, jd_snapshot, llm=None, weights
     verification = jd_snapshot["verification_status"] if jd_snapshot is not None else None
     uncertain = set(json.loads(job["uncertain_fields"])) if job["uncertain_fields"] else set()
     log: list = []
-    hf = hard_filters(profile, job, jd_text, hard_filter_cfg)
-    failed = [k for k, v in hf.items() if v["result"] == "fail"]
     flags: list = []
     missing: list = []
     reqs: dict = {"required_skills": [], "preferred_skills": [], "min_years": None, "arrangement": None,
@@ -841,6 +864,11 @@ def evaluate_job(conn, profile: FullProfile, job, jd_snapshot, llm=None, weights
         distance_km, distance_src = resolve_distance_km(conn, profile.location, job["location"], llm, log)
         if any(e.get("event") in DISTANCE_FAIL_EVENTS for e in log[n0:]):
             flags.append("distance_llm_unavailable")
+    # Hard filters come after the distance: the relocation rule needs it (and the hash below includes it).
+    hf = hard_filters(profile, job, jd_text, hard_filter_cfg, distance_km=distance_km, arrangement=job_arr)
+    failed = [k for k, v in hf.items() if v["result"] == "fail"]
+    if hf.get("relocation", {}).get("result") == "unknown" and distance_km is not None and distance_km > REGION_KM:
+        flags.append("relocation_possibly_needed")
     input_hash = compute_input_hash(profile, job, jd_snapshot, weights, llm is not None, hard_filter_cfg,
                                     distance_km=distance_km)
 

@@ -296,7 +296,7 @@ def test_migration_4_creates_a_global_place_distances_table(ws):
     cols = [r["name"] for r in ws.conn.execute("PRAGMA table_info(place_distances)")]
     assert {"from_place", "to_place", "km", "source", "model", "note", "created_at"} <= set(cols)
     assert "profile_id" not in cols
-    assert schema.SCHEMA_VERSION == 5 == schema.current_version(ws.conn)
+    assert schema.SCHEMA_VERSION == 6 == schema.current_version(ws.conn)
 
 
 def test_v3_database_upgrades_in_place(tmp_path, monkeypatch):
@@ -309,7 +309,7 @@ def test_v3_database_upgrades_in_place(tmp_path, monkeypatch):
     conn.close()
     monkeypatch.setattr(schema, "MIGRATIONS", full)
     conn = schema.init_db(path)
-    assert schema.current_version(conn) == 5
+    assert schema.current_version(conn) == 6
     assert q.get_profile(conn, pid)["name"] == "Old Db"
     assert conn.execute("SELECT COUNT(*) FROM place_distances").fetchone()[0] == 0
     assert conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='llm_cache'").fetchone()

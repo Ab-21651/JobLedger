@@ -39,6 +39,7 @@ class FullProfile:
     cv: Optional[CVInfo]
     prefs_version: int = 0
     notes: Optional[str] = None
+    open_to_relocation: str = "yes"       # 'yes' | 'no'; NULL in the database reads as 'yes'
 
     def preference_snapshot(self) -> dict:
         """Everything an evaluation depends on from the profile (used for input hashing)."""
@@ -47,6 +48,7 @@ class FullProfile:
             "arrangements": sorted(self.preferred_arrangements), "types": sorted(self.preferred_types),
             "excluded_companies": sorted(self.excluded_companies), "excluded_keywords": sorted(self.excluded_keywords),
             "min_salary": self.min_salary, "currency": (self.currency or "").upper(),
+            "open_to_relocation": (self.open_to_relocation or "yes").lower(),
         }
 
 
@@ -72,7 +74,8 @@ def read_full_profile(conn: sqlite3.Connection, profile_id: int) -> Optional[Ful
         excluded_companies=split_list(row["excluded_companies"]),
         excluded_keywords=split_list(row["excluded_keywords"]),
         min_salary=row["min_salary"], currency=row["currency"], cv=cv,
-        prefs_version=q.prefs_version(conn, profile_id), notes=row["notes"])
+        prefs_version=q.prefs_version(conn, profile_id), notes=row["notes"],
+        open_to_relocation=(row["open_to_relocation"] or "yes").lower())
 
 
 def list_all_profiles(conn: sqlite3.Connection) -> list:
