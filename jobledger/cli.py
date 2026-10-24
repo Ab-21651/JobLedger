@@ -6,10 +6,12 @@ A success message is only printed after the work it describes has been committed
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sqlite3
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -18,6 +20,8 @@ from jobledger.db import queries as q
 from jobledger.db.schema import init_db
 from jobledger.llm import LLMError, build_llm
 from jobledger.tools import approval_manager as am
+from jobledger.tools import jd_input
+from jobledger.tools import jd_retriever as jdr
 from jobledger.tools import stage_manager as sm
 from jobledger.tools.profile_reader import read_full_profile, read_preferences_history
 
@@ -181,19 +185,161 @@ def cmd_jobs(a):
         out(f"      {ev['match_rationale']}")
 
 
+def _store_user_jd(conn, job_id: int, text: str, evidence: str) -> None:
+    from jobledger.tools.email_parser import detect_injection
+    q.save_jd_snapshot(conn, job_id, "user-provided", None, "ok", content_text=text, verification_status="verified",
+                       verification_evidence=evidence, source_kind="user_provided",
+                       injection_flags=detect_injection(text) or None)
+    q.update_job_jd_status(conn, job_id, "RETRIEVED")
+
+
+def _cmd_jd_clip(conn, job, force: bool) -> None:
+    try:
+        text = jd_input.read_clipboard()
+    except jd_input.ClipboardError as exc:
+        raise CLIError(str(exc))
+    if len(text.strip()) < jd_input.MIN_CLIP_CHARS:
+        raise CLIError(f"the clipboard holds {len(text.strip())} characters; a job description needs at least "
+                       f"{jd_input.MIN_CLIP_CHARS}. Copy the whole posting and try again.")
+    hay = jd_input.normalize(text)
+    evidence = "copied from clipboard"
+    if not (jd_input.mentions(hay, job["title"]) and jd_input.mentions(hay, job["company"])):
+        if not force:
+            raise CLIError(f"the clipboard text does not contain both '{job['title']}' and '{job['company']}' "
+                           f"(job {job['id']}), so nothing was stored. Copy the right posting, or pass --force "
+                           f"to store it anyway.")
+        evidence += "; stored with --force although the title and company were not found in the text"
+    _store_user_jd(conn, job["id"], text, evidence)
+    out(f"stored the description for job {job['id']} (copied from clipboard, {len(text)} chars); "
+        f"run `run --no-mail` to re-evaluate")
+
+
+def _watch_event(conn, pid: int, text: str, counts: dict) -> None:
+    if len(text.strip()) < jd_input.MIN_CLIP_CHARS:
+        return                                   # not a job posting: say nothing
+    chars = len(text)
+    kind, found = jd_input.match_job_by_text(conn, pid, text)
+    if kind == "none":
+        counts["ignored"] += 1
+        out(f"ignored: copied text ({chars} chars) matches no open job of this profile")
+    elif kind == "ambiguous":
+        counts["ambiguous"] += 1
+        ids = ", ".join(str(j["id"]) for j in sorted(found, key=lambda j: j["id"]))
+        out(f"ambiguous: copied text matches jobs {ids}; choose one with `jd N --clip`")
+    else:
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        if any(s["content_hash"] == digest for s in q.list_jd_snapshots(conn, found["id"])):
+            counts["already stored"] += 1
+            out(f"already stored: job {found['id']} '{found['title']}' @ {found['company']} (same text)")
+            return
+        _store_user_jd(conn, found["id"], text, "copied from clipboard; matched on title+company")
+        counts["stored"] += 1
+        out(f"stored: job {found['id']} '{found['title']}' @ {found['company']} ({chars} chars)")
+
+
+def _cmd_jd_watch(a, conn, pid: int) -> None:
+    interval = 1.0 if a.interval is None else a.interval
+    if interval < 0:
+        raise CLIError("--interval must be 0 or more seconds")
+    counts = {"stored": 0, "ignored": 0, "ambiguous": 0, "already stored": 0}
+    out(f"watching the clipboard every {interval:g}s: copy a whole job posting (Ctrl+C to stop)")
+    last_digest = None
+    last_problem = None
+    started = time.monotonic()
+    try:
+        while True:
+            text = None
+            try:
+                text = jd_input.read_clipboard()
+                last_problem = None
+            except jd_input.ClipboardUnavailable as exc:
+                raise CLIError(str(exc))
+            except jd_input.ClipboardError as exc:
+                if str(exc) != last_problem:
+                    out(f"  clipboard not readable right now: {exc} (still watching)")
+                    last_problem = str(exc)
+            if text is not None:
+                digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+                if digest != last_digest:            # a repeat of the text just seen is ignored
+                    last_digest = digest
+                    _watch_event(conn, pid, text, counts)
+            if a.max_seconds is not None and time.monotonic() - started >= a.max_seconds:
+                break
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        out("")
+    out("summary: " + ", ".join(f"{n} {k}" for k, n in counts.items()))
+    out("run `py -m jobledger run --no-mail` to score")
+
+
+def _jd_fetch_deps() -> dict:
+    """Session, resolver and sleep used by `jd N --url`. Tests replace this with the offline fakes."""
+    return {"session": None, "resolver": None, "sleep": time.sleep}
+
+
+def _cmd_jd_url(conn, job, url: str) -> None:
+    s = get_settings()
+    deps = _jd_fetch_deps()
+    res = jdr.retrieve_jd(url, session=deps["session"], resolver=deps["resolver"], max_bytes=s.jd_max_bytes,
+                          timeout=s.http_timeout, max_retries=s.max_retries, sleep=deps["sleep"], allow_private=False)
+    if res.failure_code == "unsafe_url":
+        raise CLIError(f"refused: {res.failure_reason}. Nothing was stored.")
+    verification, evidence = (None, None)
+    if res.ok:
+        verification, evidence = jdr.verify_jd_match(job["title"], job["company"], res)
+    reason = None if res.ok else f"{res.failure_code}: {res.failure_reason}"
+    with q.tx(conn):
+        q.save_jd_snapshot(
+            conn, job["id"], res.source_url, res.final_url, "ok" if res.ok else "failed", res.retrieved_at, reason,
+            res.text if res.ok else None, res.title_found, res.company_found, verification, evidence,
+            res.response_bytes, res.retry_count, "user_url", res.injection_flags or None)
+        if res.ok:
+            status = "RETRIEVED" if verification in ("verified", "partial") else "UNVERIFIED"
+        elif res.failure_code == "expired":
+            status = "EXPIRED"
+            q.set_job_workflow(conn, job["id"], "expired", "job page says the posting is closed")
+        else:
+            status = "FAILED"
+        q.update_job_jd_status(conn, job["id"], status)
+    if not res.ok:
+        raise CLIError(f"could not fetch {url}: {res.failure_reason} (job {job['id']} is now {status})")
+    if verification in ("verified", "partial"):
+        out(f"stored the page for job {job['id']} (verification: {verification}); "
+            f"run `run --no-mail` to re-evaluate")
+    else:
+        out(f"! stored the page for job {job['id']}, but it does not look like this job "
+            f"({verification}: {evidence}). It will not be used for scoring; paste the text with "
+            f"--file, --text or --clip instead.")
+
+
 def cmd_jd(a):
     conn = _connect()
     pid = _pick_profile(conn, a.profile)
-    q.require_job(conn, a.job, pid)
+    chosen = [flag for flag, value in (("--file", a.file), ("--text", a.text), ("--clip", a.clip), ("--url", a.url))
+              if value not in (None, False)]
+    if a.job == "watch":
+        if chosen or a.force:
+            raise CLIError("`jd watch` takes no --file, --text, --clip, --url or --force")
+        return _cmd_jd_watch(a, conn, pid)
+    if a.interval is not None or a.max_seconds is not None:
+        raise CLIError("--interval and --max-seconds only apply to `jd watch`")
+    if not a.job.isdigit():
+        raise CLIError("the job must be a job id (a number) or 'watch'")
+    job = q.require_job(conn, int(a.job), pid)
+    if len(chosen) != 1:
+        raise CLIError("give exactly one of --file, --text, --clip or --url"
+                       + (f" (got {' and '.join(chosen)})" if chosen else ""))
+    if a.force and not a.clip:
+        raise CLIError("--force only applies to --clip")
+    if a.clip:
+        return _cmd_jd_clip(conn, job, a.force)
+    if a.url is not None:
+        return _cmd_jd_url(conn, job, a.url)
     text = Path(a.file).read_text(encoding="utf-8") if a.file else a.text
     if not text or len(text.strip()) < 50:
         raise CLIError("provide the job description with --file or --text (at least 50 characters)")
-    from jobledger.tools.email_parser import detect_injection
-    q.save_jd_snapshot(conn, a.job, "user-provided", None, "ok", content_text=text, verification_status="verified",
-                       verification_evidence="supplied by the user", source_kind="user_provided",
-                       injection_flags=detect_injection(text) or None)
-    q.update_job_jd_status(conn, a.job, "RETRIEVED")
-    out(f"stored the description for job {a.job}; run `run --no-mail` to re-evaluate")
+    _store_user_jd(conn, job["id"], text, "supplied by the user")
+    out(f"stored the description for job {job['id']}; run `run --no-mail` to re-evaluate")
 
 
 def cmd_stage(a):
@@ -339,10 +485,15 @@ def build_parser() -> argparse.ArgumentParser:
     sh.add_argument("job", type=int)
     j.set_defaults(fn=cmd_jobs)
 
-    jd = sub.add_parser("jd", help="supply a job description yourself (for NEEDS_JD jobs)")
-    jd.add_argument("job", type=int)
+    jd = sub.add_parser("jd", help="supply a job description yourself (for NEEDS_JD jobs); `jd watch` watches the clipboard")
+    jd.add_argument("job", help="job id, or 'watch'")
     jd.add_argument("--file")
     jd.add_argument("--text")
+    jd.add_argument("--clip", action="store_true", help="use the text currently on the clipboard")
+    jd.add_argument("--url", help="fetch one public job page (LinkedIn is refused by policy)")
+    jd.add_argument("--force", action="store_true", help="with --clip: store even if the title or company is not in the text")
+    jd.add_argument("--interval", type=float, default=None, help="jd watch: seconds between clipboard checks (default 1)")
+    jd.add_argument("--max-seconds", type=float, default=None, help="jd watch: stop after this many seconds")
     jd.set_defaults(fn=cmd_jd)
 
     st = sub.add_parser("stage", help="move an application to a stage (you only; the agent cannot)")

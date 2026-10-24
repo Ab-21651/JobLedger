@@ -75,6 +75,9 @@ Set `LLM_PROVIDER` (`openai | anthropic | groq | gemini | ollama | none`), `LLM_
 | `py -m jobledger run [--fixtures PATH] [--no-mail] [--no-llm] [--retry]` | one bounded agent run |
 | `py -m jobledger jobs list` / `jobs show N` | register in the terminal / one job with its evidence |
 | `py -m jobledger jd N --file jd.txt` | supply a JD yourself for a `NEEDS_JD` job |
+| `py -m jobledger jd N --clip` | same, but takes the JD from the clipboard (refused unless the title and company appear in it; `--force` overrides) |
+| `py -m jobledger jd N --url https://…` | fetch one public job page through the safe fetcher (LinkedIn is refused by policy) |
+| `py -m jobledger jd watch` | watch the clipboard; each copied posting is matched to one of your jobs and stored (Ctrl+C to stop) |
 | `py -m jobledger prefs set --set excluded_companies="X, Y" --reason "..."` | correct a preference (history kept) |
 | `py -m jobledger prefs history` | every preference change, old value → new value, reason |
 | `py -m jobledger applied N` / `stage N --to interview --evidence "..."` | **you** record what happened |
@@ -87,6 +90,14 @@ Set `LLM_PROVIDER` (`openai | anthropic | groq | gemini | ollama | none`), `LLM_
 
 Use `--profile N` when more than one profile exists; every query is scoped to one profile and the database
 itself rejects cross-profile rows (triggers).
+
+**Supplying a job description** (exactly one of `--file`, `--text`, `--clip`, `--url` per `jd N` call):
+
+* `jd watch` polls the clipboard. Copy a whole posting and it is matched by title and company to one of your
+  open jobs and stored. Ambiguous or unmatched text is reported, never guessed; repeats are skipped.
+* `jd N --clip` stores the clipboard for job N, but only if the posting names that job's title and company.
+* `jd N --url URL` fetches one public page with the same SSRF and size limits as the agent, verifies it, and
+  marks the job `FAILED` (with the reason) if the fetch fails. LinkedIn URLs are refused.
 
 ## Run the checks
 
