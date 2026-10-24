@@ -29,6 +29,28 @@ Once the agent's LLM circuit breaker is open, no further extraction calls are at
 
 `total = 100 × Σ weight × component`, rounded to one decimal.
 
+### Skill coverage judgment (eval version `v2`)
+
+The deterministic skill credit is brittle: a CV with PyTorch, LLMs and RAG is "missing" a requirement such as
+*Machine Learning/AI*. When an LLM is configured **and** requirement extraction succeeded, one extra call asks
+the model to judge each already-validated required or preferred skill against the CV as `covered`, `partial`
+or `none`. Guards, all in Python (`matcher.validate_coverage`):
+
+* Only skills that passed extraction can be judged. An extra requirement in the reply is dropped.
+* `covered` and `partial` need a `cv_evidence` that is either a CV skill name or a quote found in the CV text
+  (case and whitespace normalised). Otherwise that claim is dropped.
+* Verdict must be one of the three values. At most 60 judgments; duplicates ignored; `why` cut to 160 characters.
+* Credit is `max(deterministic, LLM)`: `covered` gives 1.0, `partial` gives 0.5, `none` changes nothing. The LLM
+  can raise a credit but never lower a literal match, and it never sets a number.
+* The CV is passed as data inside `<candidate_cv>` tags, capped at 8000 characters. One corrective retry, as for
+  extraction. If the reply is still unusable or the call fails, deterministic credit is used and the evaluation
+  carries the flag `coverage_llm_unavailable`.
+* No call is made without a usable JD or when extraction fell back to the deterministic extractor. A successful
+  evaluation makes exactly one coverage call.
+
+LLM-credited skills are shown in the rationale as *covered by CV evidence (AI-judged)* with the quoted evidence.
+Dropped claims are listed under `dropped_llm_items` in the score breakdown.
+
 ## Unknowns are not mismatches
 
 A component that cannot be determined (no years stated, arrangement missing, **or an open source conflict
