@@ -22,3 +22,9 @@ env/
 # OS
 .DS_Store
 Thumbs.db
+
+CV.txt
+EMAILS/
+jd*.txt
+dump.py
+dump2.py
