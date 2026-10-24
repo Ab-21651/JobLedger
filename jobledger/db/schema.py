@@ -6,7 +6,7 @@ Migrations are lists of single statements applied inside ONE transaction each
 Memory map (see docs/ARCHITECTURE.md):
   long-term  : profiles, cv_versions, preferences_history, jobs, job_sources,
                jd_snapshots, evaluations, applications, application_stage_history,
-               follow_ups, mailbox_state
+               follow_ups, mailbox_state, llm_cache
   episodic   : action_logs (decisions, tool results, corrections, errors, retries)
   working    : in-process AgentContext, serialised into processing_runs.checkpoint
 """
@@ -435,11 +435,28 @@ _MIGRATION_4_STATEMENTS = [
     )""",
 ]
 
+# --- v5: validated LLM results (requirement extraction, skill coverage) cached per profile. Only Python-validated
+# replies are stored; the key carries the inputs, prompt version, provider and model (see matcher.py). ---
+_MIGRATION_5_STATEMENTS = [
+    """CREATE TABLE llm_cache (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        profile_id  INTEGER NOT NULL REFERENCES profiles(id),
+        kind        TEXT NOT NULL,
+        cache_key   TEXT NOT NULL,
+        payload     TEXT NOT NULL,
+        provider    TEXT,
+        model       TEXT,
+        created_at  TEXT NOT NULL,
+        UNIQUE(profile_id, kind, cache_key)
+    )""",
+]
+
 MIGRATIONS: list[tuple[int, list[str]]] = [
     (1, _split_statements(_MIGRATION_1_SQL)),
     (2, _MIGRATION_2_STATEMENTS),
     (3, _MIGRATION_3_STATEMENTS),
     (4, _MIGRATION_4_STATEMENTS),
+    (5, _MIGRATION_5_STATEMENTS),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0]

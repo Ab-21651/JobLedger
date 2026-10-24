@@ -728,6 +728,63 @@ def usable_jd_text(snapshot) -> Optional[str]:
     return snapshot["content_text"]
 
 
+# ---------------------------------------------------------------------------
+# LLM result cache: a repeat evaluation of an unchanged JD / CV must not ask the LLM again.
+# Only VALIDATED results are stored (never failures, fallbacks or skipped calls). Keys carry the inputs,
+# the prompt version and provider/model, so a different model never reuses another model's answers.
+# ---------------------------------------------------------------------------
+
+CACHE_PROMPT_VERSION = "1"        # bump to invalidate every cached LLM result (prompt or validation change)
+
+
+def _cache_key(payload: list) -> str:
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+
+def extraction_cache_key(jd_text, title, company, cv_skills, llm) -> str:
+    return _cache_key([CACHE_PROMPT_VERSION, getattr(llm, "provider", None), getattr(llm, "model", None),
+                       title, company, jd_text, sorted(normalize_skill(s) for s in cv_skills)])
+
+
+def coverage_cache_key(requirement_names_list, cv_skills, cv_text, llm) -> str:
+    return _cache_key([CACHE_PROMPT_VERSION, getattr(llm, "provider", None), getattr(llm, "model", None),
+                       sorted(requirement_names_list), sorted(str(s) for s in cv_skills), cv_text])
+
+
+def extract_requirements_cached(conn, profile_id, jd_text, title, company, cv_skills, llm, log: list) -> tuple[dict, str, list]:
+    """extract_requirements, served from the validated-result cache when possible. Same return shape."""
+    if llm is None:
+        return extract_requirements(jd_text, title, company, cv_skills, llm, log)
+    key = extraction_cache_key(jd_text, title, company, cv_skills, llm)
+    hit = q.get_llm_cache(conn, profile_id, "extraction", key)
+    if hit is not None:
+        log.append({"event": "llm_cache_hit", "kind": "extraction"})
+        return hit["requirements"], "llm", hit["dropped"]
+    reqs, mode, dropped = extract_requirements(jd_text, title, company, cv_skills, llm, log)
+    if mode == "llm":                                   # real, validated LLM result only
+        q.save_llm_cache(conn, profile_id, "extraction", key, {"requirements": reqs, "dropped": dropped},
+                         provider=getattr(llm, "provider", None), model=getattr(llm, "model", None))
+    return reqs, mode, dropped
+
+
+def judge_coverage_cached(conn, profile_id, reqs, cv_skills, cv_text, llm, log: list) -> tuple[dict, list]:
+    """judge_coverage, served from the validated-result cache when possible. Same return shape."""
+    names = requirement_names(reqs)
+    if llm is None or not names or not (cv_text or cv_skills):
+        return judge_coverage(reqs, cv_skills, cv_text, llm, log)      # skipped: no call, nothing cached
+    key = coverage_cache_key(names, cv_skills, cv_text, llm)
+    hit = q.get_llm_cache(conn, profile_id, "coverage", key)
+    if hit is not None:
+        log.append({"event": "llm_cache_hit", "kind": "coverage"})
+        return hit["judgments"], hit["dropped"]
+    n0 = len(log)
+    judged, dropped = judge_coverage(reqs, cv_skills, cv_text, llm, log)
+    if any(e.get("event") == "coverage_ok" for e in log[n0:]):   # failures and fallbacks are never cached
+        q.save_llm_cache(conn, profile_id, "coverage", key, {"judgments": judged, "dropped": dropped},
+                         provider=getattr(llm, "provider", None), model=getattr(llm, "model", None))
+    return judged, dropped
+
+
 def evaluate_job(conn, profile: FullProfile, job, jd_snapshot, llm=None, weights: Optional[dict] = None,
                  hard_filter_cfg: Optional[dict] = None) -> EvalOutcome:
     """Score one job for one profile and append an evaluation row (idempotent per input hash)."""
@@ -750,7 +807,8 @@ def evaluate_job(conn, profile: FullProfile, job, jd_snapshot, llm=None, weights
     mode, dropped = "deterministic", []
 
     if jd_text:
-        reqs, mode, dropped = extract_requirements(jd_text, job["title"], job["company"], cv_skills, llm, log)
+        reqs, mode, dropped = extract_requirements_cached(conn, profile.id, jd_text, job["title"], job["company"],
+                                                          cv_skills, llm, log)
     else:
         missing.append("job_description")
         mode = "llm" if llm is not None else "deterministic"
@@ -759,7 +817,7 @@ def evaluate_job(conn, profile: FullProfile, job, jd_snapshot, llm=None, weights
     coverage, cov_dropped, cov_ran = {}, [], False
     if jd_text and llm is not None and mode == "llm":
         n0 = len(log)
-        coverage, cov_dropped = judge_coverage(reqs, cv_skills, cv_text, llm, log)
+        coverage, cov_dropped = judge_coverage_cached(conn, profile.id, reqs, cv_skills, cv_text, llm, log)
         cov_ran = True
         if any(e.get("event") in COVERAGE_FAIL_EVENTS for e in log[n0:]):
             flags.append("coverage_llm_unavailable")

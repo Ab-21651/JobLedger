@@ -868,3 +868,28 @@ def save_place_distance(conn: sqlite3.Connection, a: str, b: str, km: float, sou
                VALUES (?,?,?,?,?,?,?)""",
             (a, b, float(km), source, model, note, now()))
     return cur.rowcount > 0
+
+
+# ---------------------------------------------------------------------------
+# LLM result cache (profile-scoped): only Python-validated results are ever written (see matcher.py)
+# ---------------------------------------------------------------------------
+
+def get_llm_cache(conn: sqlite3.Connection, profile_id: int, kind: str, cache_key: str) -> Optional[dict]:
+    """The validated payload stored for this profile, decoded, or None. Other profiles' rows are never returned."""
+    row = conn.execute(
+        "SELECT payload FROM llm_cache WHERE profile_id = ? AND kind = ? AND cache_key = ?",
+        (profile_id, kind, cache_key)).fetchone()
+    return json.loads(row["payload"]) if row else None
+
+
+def save_llm_cache(conn: sqlite3.Connection, profile_id: int, kind: str, cache_key: str, payload: dict,
+                   provider: Optional[str] = None, model: Optional[str] = None) -> bool:
+    """Store one validated LLM result. INSERT OR IGNORE: the first stored result for a key is kept. True if inserted."""
+    if not kind or not cache_key:
+        raise ValueError("llm cache entries need a kind and a key")
+    with tx(conn):
+        cur = conn.execute(
+            """INSERT OR IGNORE INTO llm_cache (profile_id, kind, cache_key, payload, provider, model, created_at)
+               VALUES (?,?,?,?,?,?,?)""",
+            (profile_id, kind, cache_key, json.dumps(payload), provider, model, now()))
+    return cur.rowcount > 0

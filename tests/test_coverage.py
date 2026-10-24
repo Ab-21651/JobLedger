@@ -29,8 +29,8 @@ def _validate(obj, reqs=ML_REQS):
     return m.validate_coverage(obj, m.requirement_names(reqs), CV_NORM, CV_TEXT)
 
 
-def _profile(conn):
-    pid = q.create_profile(conn, "Sam Cov", "sam.cov@example.com", None, "London", "UK", "hybrid", "fulltime",
+def _profile(conn, email="sam.cov@example.com"):
+    pid = q.create_profile(conn, "Sam Cov", email, None, "London", "UK", "hybrid", "fulltime",
                            "", "", None, "GBP", None)
     q.add_cv_version(conn, pid, "cv-cov", CV_TEXT, ",".join(CV_SKILLS), 6, "MSc")
     return pid
@@ -171,9 +171,11 @@ def test_judge_coverage_retries_once_with_the_reason():
 # ---------------------------------------------------------------- end to end (evaluate_job)
 
 def test_one_extra_call_and_skill_score_rises(ws):
-    pid = _profile(ws.conn)
+    # the baseline gets its own profile, so its cached (empty) judgment cannot answer the covered job
+    base_pid = _profile(ws.conn, "sam.cov.base@example.com")
     base_llm = ScriptedLLM([EXTRACT_OK, EMPTY_JUDGMENTS])
-    base = _run(ws.conn, pid, JD, base_llm, "Acme Base")
+    base = _run(ws.conn, base_pid, JD, base_llm, "Acme Base")
+    pid = _profile(ws.conn)
     llm = ScriptedLLM([EXTRACT_OK, json.dumps(_cov("Machine Learning/AI", "covered", "PyTorch"))])
     out = _run(ws.conn, pid, JD, llm, "Acme Covered")
     assert len(llm.calls) == 2 and llm.calls[1]["system"] == m.COVERAGE_SYSTEM_PROMPT
@@ -182,6 +184,11 @@ def test_one_extra_call_and_skill_score_rises(ws):
     assert out.total_score > base.total_score
     assert 'covered by CV evidence (AI-judged): Machine Learning/AI via "PyTorch"' in out.rationale
     assert "matched Python" in out.rationale
+    # a second job with the same requirement names and CV: coverage is a cache hit (no new call), same score
+    again_llm = ScriptedLLM([EXTRACT_OK])
+    again = _run(ws.conn, pid, JD, again_llm, "Acme Again")
+    assert [c["system"] for c in again_llm.calls] == [m.SYSTEM_PROMPT]
+    assert again.components["skill"] == out.components["skill"] == 1.0
 
 
 @pytest.mark.parametrize("bad", [
@@ -189,10 +196,14 @@ def test_one_extra_call_and_skill_score_rises(ws):
     [LLMError("timeout", "simulated timeout"), LLMError("server", "down")],
 ])
 def test_unusable_coverage_falls_back_with_flag(ws, bad):
+    # the baseline gets its own profile, so the failing run is a genuine cache miss
+    base = _run(ws.conn, _profile(ws.conn, "sam.cov.base@example.com"), JD,
+                ScriptedLLM([EXTRACT_OK, EMPTY_JUDGMENTS]), "Acme Base")
     pid = _profile(ws.conn)
-    base = _run(ws.conn, pid, JD, ScriptedLLM([EXTRACT_OK, EMPTY_JUDGMENTS]), "Acme Base")
     out = _run(ws.conn, pid, JD, ScriptedLLM([EXTRACT_OK, *bad]), "Acme Bad")
     assert "coverage_llm_unavailable" in out.flags
+    assert ws.conn.execute("SELECT COUNT(*) FROM llm_cache WHERE profile_id=? AND kind='coverage'",
+                           (pid,)).fetchone()[0] == 0           # a failed reply is never cached
     assert out.scoring_mode == "llm"
     assert out.total_score == base.total_score and out.components == base.components
     row = ws.conn.execute("SELECT score_breakdown FROM evaluations WHERE id=?", (out.evaluation_id,)).fetchone()

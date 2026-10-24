@@ -49,6 +49,8 @@ types that hand work back to you.
 | Long-term | SQLite | profile, CV versions, preferences + history, jobs, sources, conflicts, JD snapshots, evaluations, applications, follow-ups, mailbox cursor, approvals |
 | Episodic | `action_logs`, `processing_runs`, stage/preference/evaluation history | what the agent saw, was allowed, chose, and what happened (`jobledger logs`) |
 
+Validated LLM results (requirement extraction, skill coverage) are cached per profile in `llm_cache`, keyed by the inputs, prompt version, provider and model; failures and fallbacks are never stored.
+
 ## Data integrity
 
 * Autocommit connection + explicit `tx()` (BEGIN IMMEDIATE; nested use joins the outer transaction), WAL, FKs on.

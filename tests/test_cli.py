@@ -33,7 +33,7 @@ def run(capsys, *argv):
 
 def test_init_reports_schema_version(cli_env, capsys):
     code, out = run(capsys, "init")
-    assert code == 0 and "schema v4" in out
+    assert code == 0 and "schema v5" in out
 
 
 def test_doctor_never_prints_secrets(cli_env, capsys, monkeypatch):
