@@ -185,15 +185,48 @@ def cmd_jobs(a):
         out(f"      {ev['match_rationale']}")
 
 
-def _store_user_jd(conn, job_id: int, text: str, evidence: str, verification: str = "verified") -> None:
+JD_USABLE_VERIFICATIONS = ("verified", "partial", "email_inline")   # stored texts that scoring can use
+
+
+def _longest_usable_stored_chars(conn, job_id: int) -> int:
+    """Length of the longest stored description of this job that scoring can use (0 when there is none)."""
+    return max((len(s["content_text"]) for s in q.list_jd_snapshots(conn, job_id)
+                if s["status"] == "ok" and s["verification_status"] in JD_USABLE_VERIFICATIONS
+                and s["content_text"]), default=0)
+
+
+def _shorter_than_stored(conn, job_id: int, text: str) -> int:
+    """The stored length that `text` is too short to replace, or 0 when it may replace the stored text.
+
+    A copy under half the length of the longest stored description is only part of the posting (often the
+    'About the job' box), and the latest snapshot is the one that gets scored, so it must not replace the full text.
+    """
+    longest = _longest_usable_stored_chars(conn, job_id)
+    return longest if len(text.strip()) * 2 < longest else 0
+
+
+def _kept_longer_message(conn, job, text: str) -> str:
+    stored = _longest_usable_stored_chars(conn, job["id"])
+    return (f'kept the longer stored description: job {job["id"]} "{job["title"]}" @ {job["company"]} '
+            f"(stored {stored} chars, this copy only {len(text.strip())}). Copy the full text again, or use "
+            f"`py -m jobledger jd {job['id']} --clip --replace` to replace it.")
+
+
+def _store_user_jd(conn, job_id: int, text: str, evidence: str, verification: str = "verified",
+                   replace: bool = False) -> bool:
+    """Stores a user-supplied description and makes it the latest snapshot. Returns False (storing nothing)
+    when the text is too short to replace the stored description and `replace` is not set."""
     from jobledger.tools.email_parser import detect_injection
+    if not replace and _shorter_than_stored(conn, job_id, text):
+        return False
     q.save_jd_snapshot(conn, job_id, "user-provided", None, "ok", content_text=text, verification_status=verification,
                        verification_evidence=evidence, source_kind="user_provided",
                        injection_flags=detect_injection(text) or None)
     q.update_job_jd_status(conn, job_id, "RETRIEVED")
+    return True
 
 
-def _cmd_jd_clip(conn, job, force: bool) -> None:
+def _cmd_jd_clip(conn, job, force: bool, replace: bool = False) -> None:
     try:
         text = jd_input.read_clipboard()
     except jd_input.ClipboardError as exc:
@@ -209,7 +242,8 @@ def _cmd_jd_clip(conn, job, force: bool) -> None:
                            f"(job {job['id']}), so nothing was stored. Copy the right posting, or pass --force "
                            f"to store it anyway.")
         evidence += "; stored with --force although the title and company were not found in the text"
-    _store_user_jd(conn, job["id"], text, evidence)
+    if not _store_user_jd(conn, job["id"], text, evidence, replace=replace):
+        raise CLIError(_kept_longer_message(conn, job, text))
     out(f"stored the description for job {job['id']} (copied from clipboard, {len(text)} chars); "
         f"run `run --no-mail` to re-evaluate")
 
@@ -235,6 +269,11 @@ def _live_header(pending: dict) -> Optional[str]:
     return pending["header"]
 
 
+def _watch_kept_longer(conn, job, text: str, counts: dict) -> None:
+    counts["kept longer"] += 1
+    out(_kept_longer_message(conn, job, text))
+
+
 def _watch_event(conn, pid: int, text: str, counts: dict, pending: dict) -> None:
     stripped = text.strip()
     header = _live_header(pending)
@@ -255,8 +294,10 @@ def _watch_event(conn, pid: int, text: str, counts: dict, pending: dict) -> None
                 counts["already stored"] += 1
                 out(f"already stored: job {found['id']} '{found['title']}' @ {found['company']} (same text)")
                 return
-            _store_user_jd(conn, found["id"], body,
-                           "copied from clipboard in two parts: title line, then description; matched on title+company")
+            evidence = "copied from clipboard in two parts: title line, then description; matched on title+company"
+            if not _store_user_jd(conn, found["id"], body, evidence):
+                _watch_kept_longer(conn, found, body, counts)     # the title line stays pending
+                return
             pending.clear()
             counts["stored"] += 1
             out(f'stored (2-part copy): job {found["id"]} "{found["title"]}" @ {found["company"]} '
@@ -272,7 +313,9 @@ def _watch_event(conn, pid: int, text: str, counts: dict, pending: dict) -> None
                 return
             evidence = ("copied from clipboard; weaker match: " + detail
                         + "; the job title line was not in the copied text")
-            _store_user_jd(conn, weak_job["id"], body, evidence, verification="partial")
+            if not _store_user_jd(conn, weak_job["id"], body, evidence, verification="partial"):
+                _watch_kept_longer(conn, weak_job, body, counts)
+                return
             pending.clear()
             counts["stored"] += 1
             out(f'stored (weaker match): job {weak_job["id"]} "{weak_job["title"]}" @ {weak_job["company"]} '
@@ -309,7 +352,9 @@ def _watch_event(conn, pid: int, text: str, counts: dict, pending: dict) -> None
             counts["already stored"] += 1
             out(f"already stored: job {found['id']} '{found['title']}' @ {found['company']} (same text)")
             return
-        _store_user_jd(conn, found["id"], text, "copied from clipboard; matched on title+company")
+        if not _store_user_jd(conn, found["id"], text, "copied from clipboard; matched on title+company"):
+            _watch_kept_longer(conn, found, text, counts)
+            return
         pending.clear()
         counts["stored"] += 1
         out(f"stored: job {found['id']} '{found['title']}' @ {found['company']} ({chars} chars)")
@@ -319,7 +364,7 @@ def _cmd_jd_watch(a, conn, pid: int) -> None:
     interval = 1.0 if a.interval is None else a.interval
     if interval < 0:
         raise CLIError("--interval must be 0 or more seconds")
-    counts = {"stored": 0, "ignored": 0, "ambiguous": 0, "already stored": 0}
+    counts = {"stored": 0, "ignored": 0, "ambiguous": 0, "already stored": 0, "kept longer": 0}
     pending = {}                              # a copied title line waiting for its description
     out(f"watching the clipboard every {interval:g}s: copy a whole job posting (Ctrl+C to stop)")
     last_digest = None
@@ -356,7 +401,7 @@ def _jd_fetch_deps() -> dict:
     return {"session": None, "resolver": None, "sleep": time.sleep}
 
 
-def _cmd_jd_url(conn, job, url: str) -> None:
+def _cmd_jd_url(conn, job, url: str, replace: bool = False) -> None:
     s = get_settings()
     deps = _jd_fetch_deps()
     res = jdr.retrieve_jd(url, session=deps["session"], resolver=deps["resolver"], max_bytes=s.jd_max_bytes,
@@ -366,6 +411,9 @@ def _cmd_jd_url(conn, job, url: str) -> None:
     verification, evidence = (None, None)
     if res.ok:
         verification, evidence = jdr.verify_jd_match(job["title"], job["company"], res)
+    if (res.ok and verification in ("verified", "partial") and not replace
+            and _shorter_than_stored(conn, job["id"], res.text or "")):
+        raise CLIError(_kept_longer_message(conn, job, res.text or ""))   # nothing new is recorded
     reason = None if res.ok else f"{res.failure_code}: {res.failure_reason}"
     with q.tx(conn):
         q.save_jd_snapshot(
@@ -397,8 +445,8 @@ def cmd_jd(a):
     chosen = [flag for flag, value in (("--file", a.file), ("--text", a.text), ("--clip", a.clip), ("--url", a.url))
               if value not in (None, False)]
     if a.job == "watch":
-        if chosen or a.force:
-            raise CLIError("`jd watch` takes no --file, --text, --clip, --url or --force")
+        if chosen or a.force or a.replace:
+            raise CLIError("`jd watch` takes no --file, --text, --clip, --url, --force or --replace")
         return _cmd_jd_watch(a, conn, pid)
     if a.interval is not None or a.max_seconds is not None:
         raise CLIError("--interval and --max-seconds only apply to `jd watch`")
@@ -411,13 +459,14 @@ def cmd_jd(a):
     if a.force and not a.clip:
         raise CLIError("--force only applies to --clip")
     if a.clip:
-        return _cmd_jd_clip(conn, job, a.force)
+        return _cmd_jd_clip(conn, job, a.force, a.replace)
     if a.url is not None:
-        return _cmd_jd_url(conn, job, a.url)
+        return _cmd_jd_url(conn, job, a.url, a.replace)
     text = Path(a.file).read_text(encoding="utf-8") if a.file else a.text
     if not text or len(text.strip()) < 50:
         raise CLIError("provide the job description with --file or --text (at least 50 characters)")
-    _store_user_jd(conn, job["id"], text, "supplied by the user")
+    if not _store_user_jd(conn, job["id"], text, "supplied by the user", replace=a.replace):
+        raise CLIError(_kept_longer_message(conn, job, text))
     out(f"stored the description for job {job['id']}; run `run --no-mail` to re-evaluate")
 
 
@@ -571,6 +620,8 @@ def build_parser() -> argparse.ArgumentParser:
     jd.add_argument("--clip", action="store_true", help="use the text currently on the clipboard")
     jd.add_argument("--url", help="fetch one public job page (LinkedIn is refused by policy)")
     jd.add_argument("--force", action="store_true", help="with --clip: store even if the title or company is not in the text")
+    jd.add_argument("--replace", action="store_true",
+                    help="store even if the text is under half the length of the stored description (not for `jd watch`)")
     jd.add_argument("--interval", type=float, default=None, help="jd watch: seconds between clipboard checks (default 1)")
     jd.add_argument("--max-seconds", type=float, default=None, help="jd watch: stop after this many seconds")
     jd.set_defaults(fn=cmd_jd)

@@ -100,6 +100,9 @@ itself rejects cross-profile rows (triggers).
 * `jd N --clip` stores the clipboard for job N, but only if the posting names that job's title and company.
 * `jd N --url URL` fetches one public page with the same SSRF and size limits as the agent, verifies it, and
   marks the job `FAILED` (with the reason) if the fetch fails. LinkedIn URLs are refused.
+* A copy under half the length of the stored description (e.g. only the 'About the job' box after the full posting)
+  is refused and nothing is stored: `jd watch` counts it as `kept longer`, and `jd N` fails. Copy the full text again,
+  or add `--replace` to `jd N` (not `jd watch`) to store it anyway.
 
 ## Run the checks
 

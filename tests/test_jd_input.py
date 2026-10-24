@@ -751,3 +751,188 @@ def test_title_line_without_the_company_uses_the_weaker_match_as_partial(env, ca
     assert snap["content_text"] == header + "\n" + MOSS_DESC
     assert f'stored (weaker match): job {a} "Applied AI Engineer" @ Moss (' in out_
     assert counts["stored"] == 1
+
+
+# ------------------------------------------------------------------ keep the longer stored description
+def jd_of_length(n, title="Applied AI Engineer", company="Moss", location="Warsaw"):
+    """A posting for this job, padded to exactly n characters."""
+    base = len(jd_text(title, company, location, filler=0))
+    text = jd_text(title, company, location, filler=n - base)
+    assert len(text) == n
+    return text
+
+
+LONG = jd_of_length(5936)     # the Moss-style description already stored
+SHORT = jd_of_length(1017)    # the copy that used to replace it
+
+
+def watch_once(env, capsys, monkeypatch, texts):
+    monkeypatch.setattr(jd_input, "read_clipboard", ScriptedClipboard(texts))
+    return run(capsys, "jd", "watch", "--max-seconds", "0.3", "--interval", "0")
+
+
+def feed_watch(env, capsys, monkeypatch, steps):
+    """Like feed(), with the counts of `jd watch` (including 'kept longer')."""
+    clock = {"t": 0.0}
+    monkeypatch.setattr(cli, "_now", lambda: clock["t"])
+    counts = {"stored": 0, "ignored": 0, "ambiguous": 0, "already stored": 0, "kept longer": 0}
+    pending = {}
+    for text, at in steps:
+        clock["t"] = at
+        cli._watch_event(env.conn, env.pid, text, counts, pending)
+    return capsys.readouterr().out, counts, pending
+
+
+def test_moss_style_short_watch_copy_is_kept_out(env, capsys, monkeypatch):
+    a = add_job(env, "Applied AI Engineer", "Moss", "Warsaw")
+    code, out = watch_once(env, capsys, monkeypatch, [LONG, SHORT])
+    assert code == 0, out
+    assert [s["content_text"] for s in snapshots(env, a)] == [LONG]
+    assert status_of(env, a) == "RETRIEVED"
+    assert (f'kept the longer stored description: job {a} "Applied AI Engineer" @ Moss (stored 5936 chars, '
+            f"this copy only {len(SHORT.strip())}). Copy the full text again, or use "
+            f"`py -m jobledger jd {a} --clip --replace` to replace it.") in out
+    assert "summary: 1 stored, 0 ignored, 0 ambiguous, 0 already stored, 1 kept longer" in out
+
+
+def test_clip_replace_stores_the_short_copy(env, capsys, monkeypatch):
+    a = add_job(env, "Applied AI Engineer", "Moss", "Warsaw")
+    watch_once(env, capsys, monkeypatch, [LONG])
+    monkeypatch.setattr(jd_input, "read_clipboard", lambda: SHORT)
+    code, out = run(capsys, "jd", str(a), "--clip")
+    assert code == 1 and "kept the longer stored description" in out and len(snapshots(env, a)) == 1
+    code, out = run(capsys, "jd", str(a), "--clip", "--replace")
+    assert code == 0, out
+    assert len(snapshots(env, a)) == 2 and snapshots(env, a)[-1]["content_text"] == SHORT
+
+
+def test_three_thousand_chars_against_5936_is_stored(env, capsys, monkeypatch):
+    a = add_job(env, "Applied AI Engineer", "Moss", "Warsaw")
+    code, out = watch_once(env, capsys, monkeypatch, [LONG, jd_of_length(3000)])
+    assert code == 0, out
+    assert [len(s["content_text"]) for s in snapshots(env, a)] == [5936, 3000]
+    assert "summary: 2 stored" in out
+
+
+def test_equal_length_copy_is_stored(env, capsys, monkeypatch):
+    a = add_job(env, "Applied AI Engineer", "Moss", "Warsaw")
+    other = LONG[:-2] + "!\n"
+    assert len(other) == len(LONG) and other != LONG
+    code, out = watch_once(env, capsys, monkeypatch, [LONG, other])
+    assert code == 0, out
+    assert snapshots(env, a)[-1]["content_text"] == other and "summary: 2 stored" in out
+
+
+def test_longer_copy_is_stored(env, capsys, monkeypatch):
+    a = add_job(env, "Applied AI Engineer", "Moss", "Warsaw")
+    code, out = watch_once(env, capsys, monkeypatch, [LONG, jd_of_length(7000)])
+    assert code == 0, out
+    assert [len(s["content_text"]) for s in snapshots(env, a)] == [5936, 7000]
+
+
+def test_short_copy_is_stored_when_nothing_is_stored_yet(env, capsys, monkeypatch):
+    a = add_job(env, "Applied AI Engineer", "Moss", "Warsaw")
+    code, out = watch_once(env, capsys, monkeypatch, [SHORT])
+    assert code == 0, out
+    assert len(snapshots(env, a)) == 1 and "summary: 1 stored" in out
+
+
+@pytest.mark.parametrize("status,verification,reason", [("failed", "verified", "timeout"),
+                                                        ("ok", "mismatch", None),
+                                                        ("ok", None, None)])
+def test_unusable_stored_text_does_not_block_a_short_copy(env, capsys, monkeypatch, status, verification, reason):
+    a = add_job(env, "Applied AI Engineer", "Moss", "Warsaw")
+    q.save_jd_snapshot(env.conn, a, "user-provided", None, status, failure_reason=reason, content_text=LONG,
+                       verification_status=verification)
+    code, out = watch_once(env, capsys, monkeypatch, [SHORT])
+    assert code == 0, out
+    assert snapshots(env, a)[-1]["content_text"] == SHORT and "summary: 1 stored" in out
+
+
+@pytest.mark.parametrize("verification", ["verified", "partial", "email_inline"])
+def test_each_usable_stored_verification_blocks_a_short_text(env, capsys, verification):
+    a = add_job(env, "Applied AI Engineer", "Moss", "Warsaw")
+    q.save_jd_snapshot(env.conn, a, "user-provided", None, "ok", content_text=LONG, verification_status=verification)
+    code, out = run(capsys, "jd", str(a), "--text", SHORT)
+    assert code == 1 and "kept the longer stored description" in out and "Traceback" not in out
+    assert len(snapshots(env, a)) == 1
+
+
+def test_file_too_short_fails_and_replace_stores(env, capsys):
+    a = add_job(env, "Applied AI Engineer", "Moss", "Warsaw")
+    run(capsys, "jd", str(a), "--text", LONG)
+    path = env.dir / "short.txt"
+    path.write_text(SHORT, encoding="utf-8")
+    code, out = run(capsys, "jd", str(a), "--file", str(path))
+    assert code == 1 and "kept the longer stored description" in out and "Traceback" not in out
+    assert len(snapshots(env, a)) == 1 and status_of(env, a) == "RETRIEVED"
+    code, out = run(capsys, "jd", str(a), "--file", str(path), "--replace")
+    assert code == 0, out
+    assert len(snapshots(env, a)) == 2 and snapshots(env, a)[-1]["content_text"] == SHORT
+
+
+def test_text_replace_stores_the_short_text(env, capsys):
+    a = add_job(env, "Applied AI Engineer", "Moss", "Warsaw")
+    run(capsys, "jd", str(a), "--text", LONG)
+    code, out = run(capsys, "jd", str(a), "--text", SHORT, "--replace")
+    assert code == 0, out
+    assert snapshots(env, a)[-1]["content_text"] == SHORT
+
+
+def test_url_too_short_is_refused_and_replace_stores(env, capsys, monkeypatch):
+    jid = add_job(env, "Senior Python Developer", "Acme Corp", "London")
+    run(capsys, "jd", str(jid), "--text", jd_of_length(5936, "Senior Python Developer", "Acme Corp", "London"))
+    url = "https://careers.acme.example/jobs/42"
+    use_web(monkeypatch, {url: Page(200, ACME_PAGE)})
+    code, out = run(capsys, "jd", str(jid), "--url", url)
+    assert code == 1 and "kept the longer stored description" in out and "Traceback" not in out
+    assert len(snapshots(env, jid)) == 1 and status_of(env, jid) == "RETRIEVED"
+    code, out = run(capsys, "jd", str(jid), "--url", url, "--replace")
+    assert code == 0, out
+    snap = snapshots(env, jid)[-1]
+    assert len(snapshots(env, jid)) == 2 and snap["source_kind"] == "user_url" and snap["status"] == "ok"
+
+
+def test_failed_url_fetch_is_still_recorded_with_a_longer_stored_text(env, capsys, monkeypatch):
+    jid = add_job(env, "Senior Python Developer", "Acme Corp", "London")
+    run(capsys, "jd", str(jid), "--text", jd_of_length(5936, "Senior Python Developer", "Acme Corp", "London"))
+    use_web(monkeypatch, {"https://careers.acme.example/jobs/9": Page(404, "not found")})
+    code, out = run(capsys, "jd", str(jid), "--url", "https://careers.acme.example/jobs/9")
+    assert code == 1 and "could not fetch" in out
+    assert len(snapshots(env, jid)) == 2 and snapshots(env, jid)[-1]["status"] == "failed"
+    assert status_of(env, jid) == "FAILED"
+
+
+def test_replace_is_rejected_for_jd_watch(env, capsys):
+    code, out = run(capsys, "jd", "watch", "--replace", "--max-seconds", "0.1", "--interval", "0")
+    assert code == 1 and "--replace" in out and "watching the clipboard" not in out
+
+
+def test_strict_watch_refusal_is_counted_and_nothing_is_stored(env, capsys, monkeypatch):
+    a = add_job(env, "Applied AI Engineer", "Moss", "Warsaw")
+    out_, counts, _ = feed_watch(env, capsys, monkeypatch, [(LONG, 0.0), (SHORT, 1.0)])
+    assert counts == {"stored": 1, "ignored": 0, "ambiguous": 0, "already stored": 0, "kept longer": 1}
+    assert out_.count("kept the longer stored description") == 1
+    assert len(snapshots(env, a)) == 1
+
+
+def test_two_part_copy_that_is_too_short_keeps_the_title_line_pending(env, capsys, monkeypatch):
+    a = add_job(env, "Applied AI Engineer", "Moss", "Warsaw")
+    cli._store_user_jd(env.conn, a, LONG, "seeded by the test")
+    out_, counts, pending = feed_watch(env, capsys, monkeypatch, [(MOSS_HEADER, 0.0), (MOSS_DESC, 1.0)])
+    assert counts == {"stored": 0, "ignored": 0, "ambiguous": 0, "already stored": 0, "kept longer": 1}
+    assert pending["header"] == MOSS_HEADER
+    assert (f'kept the longer stored description: job {a} "Applied AI Engineer" @ Moss (stored 5936 chars, '
+            f"this copy only {len((MOSS_HEADER + chr(10) + MOSS_DESC).strip())}).") in out_
+    assert len(snapshots(env, a)) == 1
+
+
+def test_weak_match_that_is_too_short_is_refused_and_counted(env, capsys, monkeypatch):
+    a = add_job(env, "AI Engineer (m/w/d)", "statworx", "Frankfurt")
+    cli._store_user_jd(env.conn, a, jd_of_length(5936, "AI Engineer (m/w/d)", "statworx", "Frankfurt"), "seeded")
+    monkeypatch.setattr(jd_input, "read_clipboard", ScriptedClipboard([STATWORX_BOX]))
+    code, out = run(capsys, "jd", "watch", "--max-seconds", "0.3", "--interval", "0")
+    assert code == 0, out
+    assert "stored (weaker match)" not in out and "kept the longer stored description" in out
+    assert "summary: 0 stored, 0 ignored, 0 ambiguous, 0 already stored, 1 kept longer" in out
+    assert len(snapshots(env, a)) == 1
