@@ -138,3 +138,39 @@ def match_job_by_text(conn, profile_id: int, text: str) -> tuple:
     if len(located) == 1:
         return ("match", located[0])
     return ("ambiguous", top)
+
+
+def _no_match_problem(title: str, company: str, title_at: int, company_at: int) -> str:
+    if title_at >= 0 and company_at >= 0:
+        if title_at >= TITLE_WINDOW:
+            return f"title found at character {title_at} but only the first {TITLE_WINDOW} characters are searched"
+        return "matched title and company but could not be ranked"
+    if title_at >= 0:
+        return f'title found but company "{company}" was not found in the text'
+    return f'company found but the title "{title}" was not found'
+
+
+def explain_no_match(conn, profile_id: int, text: str, limit: int = 3) -> list:
+    """Why copied text matched no job: the open jobs whose title or company appears in the text, closest first.
+
+    Each item is {"job_id", "title", "company", "title_at", "company_at", "problem"}; a position of -1 means
+    that name was not found. Ranking: title and company found, then title only, then company only; ties go to
+    the smaller title position (the company position for company-only jobs). At most ``limit`` items.
+    """
+    hay = normalize(text)
+    scored = []
+    for job in q.list_jobs(conn, profile_id, limit=1_000_000):
+        if (job["workflow_status"] or "") in CLOSED_WORKFLOW:
+            continue
+        title_at = first_mention(hay, job["title"])
+        company_at = first_mention(hay, job["company"])
+        if title_at < 0 and company_at < 0:
+            continue
+        group = 0 if title_at >= 0 and company_at >= 0 else (1 if title_at >= 0 else 2)
+        tie = title_at if title_at >= 0 else company_at
+        scored.append(((group, tie), job, title_at, company_at))
+    scored.sort(key=lambda s: s[0])
+    return [{"job_id": job["id"], "title": job["title"], "company": job["company"],
+             "title_at": title_at, "company_at": company_at,
+             "problem": _no_match_problem(job["title"], job["company"], title_at, company_at)}
+            for _, job, title_at, company_at in scored[:limit]]

@@ -431,3 +431,80 @@ def test_jd_file_still_works(env, capsys):
     snap = snapshots(env, jid)[0]
     assert snap["source_kind"] == "user_provided" and snap["verification_evidence"] == "supplied by the user"
     assert snap["content_text"] == text and status_of(env, jid) == "RETRIEVED"
+
+
+# ------------------------------------------------------------------ explain_no_match
+def test_explain_title_beyond_the_window_says_so(env):
+    add_job(env, "Senior Python Developer", "Acme Corp")
+    text = "Lorem ipsum " * 250 + "Senior Python Developer at Acme Corp"
+    [item] = jd_input.explain_no_match(env.conn, env.pid, text)
+    assert item["title_at"] == 3000 and item["company_at"] >= 0
+    assert "only the first 2500" in item["problem"]
+
+
+def test_explain_title_with_the_wrong_company(env):
+    add_job(env, "Senior Python Developer", "Acme Corp")
+    [item] = jd_input.explain_no_match(env.conn, env.pid, jd_text("Senior Python Developer", "Globex"))
+    assert item["title_at"] >= 0 and item["company_at"] == -1
+    assert 'company "Acme Corp" was not found' in item["problem"]
+
+
+def test_explain_company_only_says_the_title_was_not_found(env):
+    add_job(env, "Senior Python Developer", "Acme Corp")
+    [item] = jd_input.explain_no_match(env.conn, env.pid, jd_text("Florist", "Acme Corp"))
+    assert item["title_at"] == -1 and item["company_at"] >= 0
+    assert 'the title "Senior Python Developer" was not found' in item["problem"]
+
+
+def test_explain_unrelated_text_lists_nothing(env):
+    add_job(env, "Senior Python Developer", "Acme Corp")
+    assert jd_input.explain_no_match(env.conn, env.pid, jd_text("Florist", "Petal Shop")) == []
+
+
+def test_explain_ranks_title_only_before_company_only_and_respects_limit(env):
+    add_job(env, "Florist", "Nobody Ltd")
+    companies = ["Acme Corp", "Globex", "Initech", "Hooli", "Umbrella"]
+    titles = ["Chef de Cuisine", "Pilot Trainee", "Lighthouse Keeper", "Baker", "Bus Driver"]
+    for title, company in zip(titles, companies):
+        add_job(env, title, company)
+    text = jd_text("Florist", "Petal Shop") + "Also seen: Acme Corp, Globex, Initech, Hooli, Umbrella."
+    items = jd_input.explain_no_match(env.conn, env.pid, text, limit=3)
+    assert len(items) == 3
+    assert [i["title"] for i in items] == ["Florist", "Chef de Cuisine", "Pilot Trainee"]
+    assert 'company "Nobody Ltd" was not found' in items[0]["problem"]
+    assert len(jd_input.explain_no_match(env.conn, env.pid, text, limit=1)) == 1
+
+
+# ------------------------------------------------------------------ jd watch explanations
+def test_watch_ignored_text_shows_its_start_and_the_closest_job(env, capsys, monkeypatch):
+    a = add_job(env, "Senior Python Developer", "Acme Corp")
+    text = "Lorem ipsum " * 250 + "Senior Python Developer at Acme Corp"
+    monkeypatch.setattr(jd_input, "read_clipboard", ScriptedClipboard([text]))
+    code, out = run(capsys, "jd", "watch", "--max-seconds", "0.3", "--interval", "0")
+    assert code == 0, out
+    lines = out.splitlines()
+    i = next(n for n, line in enumerate(lines) if line.startswith("ignored:"))
+    assert lines[i + 1].startswith('  text starts: "Lorem ipsum Lorem ipsum')
+    assert (f'  closest: job {a} "Senior Python Developer" @ Acme Corp - title found at character 3000 '
+            f'but only the first 2500 characters are searched') in lines
+
+
+def test_watch_unrelated_text_says_no_job_appears(env, capsys, monkeypatch):
+    add_job(env, "Senior Python Developer", "Acme Corp")
+    monkeypatch.setattr(jd_input, "read_clipboard", ScriptedClipboard([jd_text("Florist", "Petal Shop")]))
+    code, out = run(capsys, "jd", "watch", "--max-seconds", "0.3", "--interval", "0")
+    assert code == 0, out
+    assert "no job title or company from this profile appears in the text" in out
+    assert "closest: job" not in out
+
+
+def test_watch_ambiguous_lists_each_candidate(env, capsys, monkeypatch):
+    a = add_job(env, "Backend Engineer", "Initech", "London")
+    b = add_job(env, "Backend Engineer", "Initech", "Berlin")
+    monkeypatch.setattr(jd_input, "read_clipboard",
+                        ScriptedClipboard([jd_text("Backend Engineer", "Initech", "Paris")]))
+    code, out = run(capsys, "jd", "watch", "--max-seconds", "0.3", "--interval", "0")
+    assert code == 0, out
+    lines = out.splitlines()
+    assert f'  job {a} "Backend Engineer" @ Initech (London)' in lines
+    assert f'  job {b} "Backend Engineer" @ Initech (Berlin)' in lines

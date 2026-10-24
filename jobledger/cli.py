@@ -222,10 +222,21 @@ def _watch_event(conn, pid: int, text: str, counts: dict) -> None:
     if kind == "none":
         counts["ignored"] += 1
         out(f"ignored: copied text ({chars} chars) matches no open job of this profile")
+        preview = " ".join(text.split())[:80]
+        out(f'  text starts: "{preview}"')
+        closest = jd_input.explain_no_match(conn, pid, text)
+        if not closest:
+            out("  no job title or company from this profile appears in the text "
+                "(is this a job from a different email batch?)")
+        for item in closest:
+            out(f'  closest: job {item["job_id"]} "{item["title"]}" @ {item["company"]} - {item["problem"]}')
     elif kind == "ambiguous":
         counts["ambiguous"] += 1
         ids = ", ".join(str(j["id"]) for j in sorted(found, key=lambda j: j["id"]))
         out(f"ambiguous: copied text matches jobs {ids}; choose one with `jd N --clip`")
+        for j in sorted(found, key=lambda j: j["id"]):
+            loc = f" ({j['location']})" if j["location"] else ""
+            out(f'  job {j["id"]} "{j["title"]}" @ {j["company"]}{loc}')
     else:
         digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
         if any(s["content_hash"] == digest for s in q.list_jd_snapshots(conn, found["id"])):
