@@ -185,9 +185,9 @@ def cmd_jobs(a):
         out(f"      {ev['match_rationale']}")
 
 
-def _store_user_jd(conn, job_id: int, text: str, evidence: str) -> None:
+def _store_user_jd(conn, job_id: int, text: str, evidence: str, verification: str = "verified") -> None:
     from jobledger.tools.email_parser import detect_injection
-    q.save_jd_snapshot(conn, job_id, "user-provided", None, "ok", content_text=text, verification_status="verified",
+    q.save_jd_snapshot(conn, job_id, "user-provided", None, "ok", content_text=text, verification_status=verification,
                        verification_evidence=evidence, source_kind="user_provided",
                        injection_flags=detect_injection(text) or None)
     q.update_job_jd_status(conn, job_id, "RETRIEVED")
@@ -214,12 +214,79 @@ def _cmd_jd_clip(conn, job, force: bool) -> None:
         f"run `run --no-mail` to re-evaluate")
 
 
-def _watch_event(conn, pid: int, text: str, counts: dict) -> None:
-    if len(text.strip()) < jd_input.MIN_CLIP_CHARS:
-        return                                   # not a job posting: say nothing
+def _already_stored(conn, job_id: int, text: str) -> bool:
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return any(s["content_hash"] == digest for s in q.list_jd_snapshots(conn, job_id))
+
+
+TITLE_LINE_MIN_CHARS = 5       # a short copy this long or longer may be the title line of the posting copied next
+TITLE_LINE_MAX_CHARS = 300     # a longer short copy is just text, never a title line
+TITLE_LINE_MAX_AGE_S = 120     # a title line is combined only with a description copied this soon after it
+_now = time.monotonic          # clock for that age check; tests replace it
+
+
+def _live_header(pending: dict) -> Optional[str]:
+    """The title line copied recently enough to combine with the next description, or None."""
+    if "header" not in pending:
+        return None
+    if _now() - pending["at"] > TITLE_LINE_MAX_AGE_S:
+        pending.clear()
+        return None
+    return pending["header"]
+
+
+def _watch_event(conn, pid: int, text: str, counts: dict, pending: dict) -> None:
+    stripped = text.strip()
+    header = _live_header(pending)
+    if TITLE_LINE_MIN_CHARS <= len(stripped) <= TITLE_LINE_MAX_CHARS:
+        pending["header"] = stripped              # a short copy: remembered as the title line, counted as nothing
+        pending["at"] = _now()
+    if len(stripped) < jd_input.MIN_CLIP_CHARS:
+        return                                    # not a job posting: say nothing
     chars = len(text)
     kind, found = jd_input.match_job_by_text(conn, pid, text)
+    body = text                                   # the text that gets stored if it matches
+    if kind == "none" and header is not None:
+        # The title line came first and the description second: match the two parts together.
+        body = header + "\n" + text
+        kind, found = jd_input.match_job_by_text(conn, pid, body)
+        if kind == "match":
+            if _already_stored(conn, found["id"], body):
+                counts["already stored"] += 1
+                out(f"already stored: job {found['id']} '{found['title']}' @ {found['company']} (same text)")
+                return
+            _store_user_jd(conn, found["id"], body,
+                           "copied from clipboard in two parts: title line, then description; matched on title+company")
+            pending.clear()
+            counts["stored"] += 1
+            out(f'stored (2-part copy): job {found["id"]} "{found["title"]}" @ {found["company"]} '
+                f"({len(body)} chars)")
+            return
     if kind == "none":
+        # No title and company line in the copy (e.g. only the 'About the job' box): weaker, description-based match.
+        weak_kind, weak_job, detail = jd_input.match_job_by_description(conn, pid, body)
+        if weak_kind == "weak":
+            if _already_stored(conn, weak_job["id"], body):
+                counts["already stored"] += 1
+                out(f"already stored: job {weak_job['id']} '{weak_job['title']}' @ {weak_job['company']} (same text)")
+                return
+            evidence = ("copied from clipboard; weaker match: " + detail
+                        + "; the job title line was not in the copied text")
+            _store_user_jd(conn, weak_job["id"], body, evidence, verification="partial")
+            pending.clear()
+            counts["stored"] += 1
+            out(f'stored (weaker match): job {weak_job["id"]} "{weak_job["title"]}" @ {weak_job["company"]} '
+                f"({len(body)} chars) - it will score as PROVISIONAL; if this is the wrong job use "
+                f"`jd {weak_job['id']} --clip`")
+            return
+        if weak_kind == "ambiguous":
+            counts["ambiguous"] += 1
+            listed = ", ".join(f'job {j["id"]} "{j["title"]}" @ {j["company"]}'
+                               + (f" ({j['location']})" if j["location"] else "")
+                               for j in sorted(weak_job, key=lambda j: j["id"]))
+            out("ambiguous: this looks like a description for one of: " + listed
+                + "; copy the page including the job title line, or use `jd N --clip`")
+            return
         counts["ignored"] += 1
         out(f"ignored: copied text ({chars} chars) matches no open job of this profile")
         preview = " ".join(text.split())[:80]
@@ -238,12 +305,12 @@ def _watch_event(conn, pid: int, text: str, counts: dict) -> None:
             loc = f" ({j['location']})" if j["location"] else ""
             out(f'  job {j["id"]} "{j["title"]}" @ {j["company"]}{loc}')
     else:
-        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
-        if any(s["content_hash"] == digest for s in q.list_jd_snapshots(conn, found["id"])):
+        if _already_stored(conn, found["id"], text):
             counts["already stored"] += 1
             out(f"already stored: job {found['id']} '{found['title']}' @ {found['company']} (same text)")
             return
         _store_user_jd(conn, found["id"], text, "copied from clipboard; matched on title+company")
+        pending.clear()
         counts["stored"] += 1
         out(f"stored: job {found['id']} '{found['title']}' @ {found['company']} ({chars} chars)")
 
@@ -253,6 +320,7 @@ def _cmd_jd_watch(a, conn, pid: int) -> None:
     if interval < 0:
         raise CLIError("--interval must be 0 or more seconds")
     counts = {"stored": 0, "ignored": 0, "ambiguous": 0, "already stored": 0}
+    pending = {}                              # a copied title line waiting for its description
     out(f"watching the clipboard every {interval:g}s: copy a whole job posting (Ctrl+C to stop)")
     last_digest = None
     last_problem = None
@@ -273,7 +341,7 @@ def _cmd_jd_watch(a, conn, pid: int) -> None:
                 digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
                 if digest != last_digest:            # a repeat of the text just seen is ignored
                     last_digest = digest
-                    _watch_event(conn, pid, text, counts)
+                    _watch_event(conn, pid, text, counts, pending)
             if a.max_seconds is not None and time.monotonic() - started >= a.max_seconds:
                 break
             time.sleep(interval)

@@ -93,8 +93,10 @@ itself rejects cross-profile rows (triggers).
 
 **Supplying a job description** (exactly one of `--file`, `--text`, `--clip`, `--url` per `jd N` call):
 
-* `jd watch` polls the clipboard. Copy a whole posting and it is matched by title and company to one of your
-  open jobs and stored. Ambiguous or unmatched text is reported, never guessed; repeats are skipped.
+* `jd watch` polls the clipboard. Copying the whole page (including the title line) gives a firm match by title and
+  company; copying only the 'About the job' box gives a weaker match, stored as PROVISIONAL. Copying the title line
+  and then the description within 2 minutes is matched as one posting. Ambiguous or unmatched text is reported,
+  never guessed; repeats are skipped.
 * `jd N --clip` stores the clipboard for job N, but only if the posting names that job's title and company.
 * `jd N --url URL` fetches one public page with the same SSRF and size limits as the agent, verifies it, and
   marks the job `FAILED` (with the reason) if the fetch fails. LinkedIn URLs are refused.

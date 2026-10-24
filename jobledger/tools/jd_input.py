@@ -174,3 +174,57 @@ def explain_no_match(conn, profile_id: int, text: str, limit: int = 3) -> list:
              "title_at": title_at, "company_at": company_at,
              "problem": _no_match_problem(job["title"], job["company"], title_at, company_at)}
             for _, job, title_at, company_at in scored[:limit]]
+
+
+DESCRIPTION_MIN_PERCENT = 67    # share of a title's words that must appear in copied text for a weaker match
+_TITLE_STOPWORDS = frozenset("m w d f x all genders gender remote hybrid onsite and the of for with at in to a an".split())
+_WORD = re.compile(r"[^\W_]+")
+
+
+def _company_rank(hay: str, company: str) -> int:
+    """0 when the company's full name is in the text, 1 when only its first word is (a multi-word name whose
+    first word has at least 4 characters: 'Dolby Laboratories' -> 'dolby'), -1 when neither is."""
+    if any(find_term(hay, v) >= 0 for v in name_variants(company)):
+        return 0
+    words = normalize(_PARENTHESISED.sub(" ", normalize(company))).split()
+    if len(words) >= 2 and len(words[0]) >= 4 and find_term(hay, words[0]) >= 0:
+        return 1
+    return -1
+
+
+def _title_words(title: str) -> list:
+    """The words of a job title that identify it: parenthesised parts such as '(m/w/d)' and stopwords dropped."""
+    bare = normalize(_PARENTHESISED.sub(" ", normalize(title)))
+    return [w for w in _WORD.findall(bare) if len(w) >= 2 and w not in _TITLE_STOPWORDS]
+
+
+def match_job_by_description(conn, profile_id: int, text: str) -> tuple:
+    """Weaker match for copied text without a title and company line (e.g. only LinkedIn's 'About the job' box).
+
+    Returns ("weak", job row, detail) | ("ambiguous", [job rows], None) | ("none", None, None).
+    A job is a candidate when its company occurs anywhere in the text (see _company_rank) and at least
+    DESCRIPTION_MIN_PERCENT of its title words occur as whole words. Candidates are ranked by
+    (share of title words found, count of title words found, full company name before first word).
+    One top candidate wins; several tied at the top are ambiguous. Closed and expired jobs are never candidates.
+    """
+    hay = normalize(text)
+    scored = []
+    for job in q.list_jobs(conn, profile_id, limit=1_000_000):
+        if (job["workflow_status"] or "") in CLOSED_WORKFLOW:
+            continue
+        company_rank = _company_rank(hay, job["company"])
+        words = _title_words(job["title"])
+        if company_rank < 0 or not words:
+            continue
+        found = sum(1 for w in words if find_term(hay, w) >= 0)
+        if found * 100 < DESCRIPTION_MIN_PERCENT * len(words):
+            continue
+        scored.append(((-found / len(words), -found, company_rank), job, found, len(words)))
+    if not scored:
+        return ("none", None, None)
+    best = min(s[0] for s in scored)
+    top = [(job, found, total) for key, job, found, total in scored if key == best]
+    if len(top) > 1:
+        return ("ambiguous", [job for job, _, _ in top], None)
+    job, found, total = top[0]
+    return ("weak", job, f"company {job['company']}; {found} of {total} title words")

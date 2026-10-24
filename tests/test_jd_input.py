@@ -13,7 +13,7 @@ from jobledger.config import reset_settings
 from jobledger.db import queries as q
 from jobledger.db.schema import init_db
 from jobledger.testing import FakeWeb, Page, Sleeper, public_resolver, sam_profile
-from jobledger.tools import jd_input
+from jobledger.tools import jd_input, matcher
 
 FILLER = "We are hiring an engineer to build reliable data pipelines and services for our customers. "
 ACME_PAGE = ("<html><head><title>Senior Python Developer | Acme Corp</title></head><body>"
@@ -478,15 +478,15 @@ def test_explain_ranks_title_only_before_company_only_and_respects_limit(env):
 # ------------------------------------------------------------------ jd watch explanations
 def test_watch_ignored_text_shows_its_start_and_the_closest_job(env, capsys, monkeypatch):
     a = add_job(env, "Senior Python Developer", "Acme Corp")
-    text = "Lorem ipsum " * 250 + "Senior Python Developer at Acme Corp"
+    text = "Lorem ipsum " * 250 + "Acme Corp is hiring in London"
     monkeypatch.setattr(jd_input, "read_clipboard", ScriptedClipboard([text]))
     code, out = run(capsys, "jd", "watch", "--max-seconds", "0.3", "--interval", "0")
     assert code == 0, out
     lines = out.splitlines()
     i = next(n for n, line in enumerate(lines) if line.startswith("ignored:"))
     assert lines[i + 1].startswith('  text starts: "Lorem ipsum Lorem ipsum')
-    assert (f'  closest: job {a} "Senior Python Developer" @ Acme Corp - title found at character 3000 '
-            f'but only the first 2500 characters are searched') in lines
+    assert (f'  closest: job {a} "Senior Python Developer" @ Acme Corp - company found but the title '
+            f'"Senior Python Developer" was not found') in lines
 
 
 def test_watch_unrelated_text_says_no_job_appears(env, capsys, monkeypatch):
@@ -508,3 +508,246 @@ def test_watch_ambiguous_lists_each_candidate(env, capsys, monkeypatch):
     lines = out.splitlines()
     assert f'  job {a} "Backend Engineer" @ Initech (London)' in lines
     assert f'  job {b} "Backend Engineer" @ Initech (Berlin)' in lines
+
+
+# ------------------------------------------------------------------ weaker match from the description alone
+DOLBY_BOX = ("About the job Join the leader in entertainment innovation. Dolby is looking for a software engineer "
+             "to help build our agentic AI platform. You will own services from design to production and work with "
+             "research and product teams across three offices. Benefits include flexible hours and a learning budget.")
+# The title phrase itself ('AI Engineer', 'Backend Engineer') must not appear in these, or the strict matcher takes them.
+STATWORX_BOX = ("About the job Über uns statworx ist ein führendes Beratungsunternehmen für Künstliche Intelligenz. "
+                "Als Engineer entwickelst du AI-Projekte und KI-Lösungen für unsere Kunden in Frankfurt und begleitest "
+                "sie vom Konzept bis zum Betrieb. Wir bieten flexible Arbeitszeiten und ein starkes Team.")
+STATWORX_TRAINEE_BOX = ("About the job Über uns statworx ist ein führendes Beratungsunternehmen für Künstliche Intelligenz. "
+                        "Als Trainee entwickelst du AI-Projekte als Engineer in Frankfurt und begleitest unsere Kunden "
+                        "vom Konzept bis zum Betrieb. Wir bieten flexible Arbeitszeiten und ein starkes Team.")
+ACME_NO_TITLE = ("Acme Corp builds data platforms for retailers across Europe. Our team writes Python every day to "
+                 "ship features, and we value curiosity, ownership and clear communication with customers and colleagues.")
+NO_COMPANY_BOX = ("Software engineer agentic AI platform role: you will own services from design to production, "
+                  "with flexible hours, a learning budget and a relaxed culture for every engineer on the team "
+                  "in London, working on tools that our creative teams use every single day.")
+INITECH_BOX = ("Initech builds backend services for banks and insurers. You will be an experienced engineer on our "
+               "platform team, shipping reliable APIs, owning production systems end to end and mentoring colleagues "
+               "who join from other teams across the company.")
+
+
+def test_description_only_text_matches_by_company_and_title_words(env):
+    jid = add_job(env, "Software Engineer Agentic AI Platform", "Dolby Laboratories")
+    kind, job, detail = jd_input.match_job_by_description(env.conn, env.pid, DOLBY_BOX)
+    assert kind == "weak" and job["id"] == jid
+    assert detail == "company Dolby Laboratories; 5 of 5 title words"
+    assert match(env, DOLBY_BOX) == ("none", None)            # the strict matcher still needs the title line
+
+
+def test_statworx_text_with_trainee_picks_the_trainee_job(env):
+    ai = add_job(env, "AI Engineer (m/w/d)", "statworx", "Frankfurt")
+    trainee = add_job(env, "Trainee AI Engineer (m/w/d)", "statworx", "Frankfurt")
+    kind, job, _ = jd_input.match_job_by_description(env.conn, env.pid, STATWORX_TRAINEE_BOX)
+    assert kind == "weak" and job["id"] == trainee
+    assert ai != trainee
+
+
+def test_statworx_text_without_trainee_picks_the_ai_engineer_job(env):
+    ai = add_job(env, "AI Engineer (m/w/d)", "statworx", "Frankfurt")
+    add_job(env, "Trainee AI Engineer (m/w/d)", "statworx", "Frankfurt")
+    kind, job, detail = jd_input.match_job_by_description(env.conn, env.pid, STATWORX_BOX)
+    assert kind == "weak" and job["id"] == ai
+    assert detail == "company statworx; 2 of 2 title words"
+
+
+def test_company_only_text_with_too_few_title_words_matches_nothing(env):
+    add_job(env, "Senior Python Developer", "Acme Corp")       # only 'python' of 3 title words is in the text
+    assert jd_input.match_job_by_description(env.conn, env.pid, ACME_NO_TITLE) == ("none", None, None)
+
+
+def test_description_without_any_company_name_matches_nothing(env, capsys, monkeypatch):
+    add_job(env, "Software Engineer Agentic AI Platform", "Dolby Laboratories")
+    assert jd_input.match_job_by_description(env.conn, env.pid, NO_COMPANY_BOX) == ("none", None, None)
+    monkeypatch.setattr(jd_input, "read_clipboard", ScriptedClipboard([NO_COMPANY_BOX]))
+    code, out = run(capsys, "jd", "watch", "--max-seconds", "0.3", "--interval", "0")
+    assert code == 0, out
+    assert any(line.startswith("ignored:") for line in out.splitlines())
+    assert "stored:" not in out and "stored (weaker match)" not in out
+
+
+def test_two_identical_jobs_with_a_description_only_text_are_ambiguous(env):
+    a = add_job(env, "Backend Engineer", "Initech", "London")
+    b = add_job(env, "Backend Engineer", "Initech", "Berlin")
+    kind, jobs, detail = jd_input.match_job_by_description(env.conn, env.pid, INITECH_BOX)
+    assert kind == "ambiguous" and sorted(j["id"] for j in jobs) == [a, b] and detail is None
+
+
+@pytest.mark.parametrize("state", ["closed", "expired"])
+def test_closed_jobs_are_not_weaker_matches(env, state):
+    add_job(env, "Software Engineer Agentic AI Platform", "Dolby Laboratories", workflow=state)
+    assert jd_input.match_job_by_description(env.conn, env.pid, DOLBY_BOX) == ("none", None, None)
+
+
+def test_weaker_match_stores_partial_with_evidence_and_says_provisional(env, capsys, monkeypatch):
+    a = add_job(env, "AI Engineer (m/w/d)", "statworx", "Frankfurt")
+    monkeypatch.setattr(jd_input, "read_clipboard", ScriptedClipboard([STATWORX_BOX]))
+    code, out = run(capsys, "jd", "watch", "--max-seconds", "0.3", "--interval", "0")
+    assert code == 0, out
+    assert (f'stored (weaker match): job {a} "AI Engineer (m/w/d)" @ statworx (' in out
+            and "it will score as PROVISIONAL" in out and f"`jd {a} --clip`" in out)
+    assert "summary: 1 stored" in out
+    (snap,) = snapshots(env, a)
+    assert snap["verification_status"] == "partial"
+    assert snap["verification_evidence"] == ("copied from clipboard; weaker match: company statworx; 2 of 2 title "
+                                             "words; the job title line was not in the copied text")
+    assert snap["content_text"] == STATWORX_BOX
+    assert status_of(env, a) == "RETRIEVED"
+
+
+def test_weaker_match_is_usable_for_scoring(env, capsys, monkeypatch):
+    a = add_job(env, "AI Engineer (m/w/d)", "statworx", "Frankfurt")
+    monkeypatch.setattr(jd_input, "read_clipboard", ScriptedClipboard([STATWORX_BOX]))
+    run(capsys, "jd", "watch", "--max-seconds", "0.3", "--interval", "0")
+    assert matcher.usable_jd_text(snapshots(env, a)[-1]) == STATWORX_BOX
+
+
+def test_recopying_a_weaker_match_says_already_stored(env, capsys, monkeypatch):
+    a = add_job(env, "AI Engineer (m/w/d)", "statworx", "Frankfurt")
+    monkeypatch.setattr(jd_input, "read_clipboard",
+                        ScriptedClipboard([STATWORX_BOX, jd_text("Florist", "Petal Shop"), STATWORX_BOX]))
+    code, out = run(capsys, "jd", "watch", "--max-seconds", "0.5", "--interval", "0")
+    assert code == 0, out
+    assert len(snapshots(env, a)) == 1
+    assert sum(line.startswith("already stored: job") for line in out.splitlines()) == 1
+
+
+def test_trainee_copy_is_stored_against_the_trainee_job_only(env, capsys, monkeypatch):
+    ai = add_job(env, "AI Engineer (m/w/d)", "statworx", "Frankfurt")
+    trainee = add_job(env, "Trainee AI Engineer (m/w/d)", "statworx", "Frankfurt")
+    monkeypatch.setattr(jd_input, "read_clipboard", ScriptedClipboard([STATWORX_TRAINEE_BOX]))
+    code, out = run(capsys, "jd", "watch", "--max-seconds", "0.3", "--interval", "0")
+    assert code == 0, out
+    assert len(snapshots(env, trainee)) == 1 and snapshots(env, ai) == []
+
+
+def test_ambiguous_description_lists_each_job_with_its_location(env, capsys, monkeypatch):
+    a = add_job(env, "Backend Engineer", "Initech", "London")
+    b = add_job(env, "Backend Engineer", "Initech", "Berlin")
+    monkeypatch.setattr(jd_input, "read_clipboard", ScriptedClipboard([INITECH_BOX]))
+    code, out = run(capsys, "jd", "watch", "--max-seconds", "0.3", "--interval", "0")
+    assert code == 0, out
+    assert (f'ambiguous: this looks like a description for one of: job {a} "Backend Engineer" @ Initech (London), '
+            f'job {b} "Backend Engineer" @ Initech (Berlin); copy the page including the job title line, '
+            f'or use `jd N --clip`') in out
+    assert "0 stored, 0 ignored, 1 ambiguous" in out
+    assert snapshots(env, a) == [] and snapshots(env, b) == []
+
+
+def test_strict_match_still_stores_as_verified(env, capsys, monkeypatch):
+    a = add_job(env, "Senior Python Developer", "Acme Corp")
+    monkeypatch.setattr(jd_input, "read_clipboard", ScriptedClipboard([jd_text("Senior Python Developer", "Acme Corp")]))
+    code, out = run(capsys, "jd", "watch", "--max-seconds", "0.3", "--interval", "0")
+    assert code == 0, out
+    (snap,) = snapshots(env, a)
+    assert snap["verification_status"] == "verified"
+    assert snap["verification_evidence"] == "copied from clipboard; matched on title+company"
+    assert "stored (weaker match)" not in out
+
+
+# ------------------------------------------------------------------ two-part copy: title line, then description
+MOSS_DESC = ("Moss builds AI-powered software for retailers and banks across Europe. You will join the platform team "
+             "in Warsaw, own services from design to production and work closely with research and product colleagues "
+             "on reliable systems. Benefits include flexible hours, a learning budget and a generous leave policy.")
+MOSS_HEADER = "Applied AI Engineer\nMoss\nWarsaw"
+
+
+def feed(env, capsys, monkeypatch, steps):
+    """Runs (text, seconds) steps through cli._watch_event with a fake clock; returns (output, counts, pending)."""
+    clock = {"t": 0.0}
+    monkeypatch.setattr(cli, "_now", lambda: clock["t"])
+    counts = {"stored": 0, "ignored": 0, "ambiguous": 0, "already stored": 0}
+    pending = {}
+    for text, at in steps:
+        clock["t"] = at
+        cli._watch_event(env.conn, env.pid, text, counts, pending)
+    return capsys.readouterr().out, counts, pending
+
+
+def test_title_line_then_description_is_one_verified_match(env, capsys, monkeypatch):
+    a = add_job(env, "Applied AI Engineer", "Moss", "Warsaw")
+    out_, counts, pending = feed(env, capsys, monkeypatch, [(MOSS_HEADER, 0.0), (MOSS_DESC, 1.0)])
+    (snap,) = snapshots(env, a)
+    assert snap["verification_status"] == "verified"
+    assert snap["verification_evidence"] == ("copied from clipboard in two parts: title line, then description; "
+                                             "matched on title+company")
+    assert snap["content_text"] == MOSS_HEADER + "\n" + MOSS_DESC
+    assert f'stored (2-part copy): job {a} "Applied AI Engineer" @ Moss (' in out_
+    assert counts == {"stored": 1, "ignored": 0, "ambiguous": 0, "already stored": 0}
+    assert pending == {}
+
+
+def test_title_line_alone_prints_nothing_and_counts_nothing(env, capsys, monkeypatch):
+    add_job(env, "Applied AI Engineer", "Moss", "Warsaw")
+    out_, counts, pending = feed(env, capsys, monkeypatch, [(MOSS_HEADER, 0.0)])
+    assert out_ == ""
+    assert counts == {"stored": 0, "ignored": 0, "ambiguous": 0, "already stored": 0}
+    assert pending["header"] == MOSS_HEADER
+
+
+def test_title_line_older_than_120_seconds_is_not_used(env, capsys, monkeypatch):
+    a = add_job(env, "Applied AI Engineer", "Moss", "Warsaw")
+    out_, counts, _ = feed(env, capsys, monkeypatch, [(MOSS_HEADER, 0.0), (MOSS_DESC, 120.5)])
+    assert snapshots(env, a) == []
+    assert "2-part" not in out_ and "ignored:" in out_
+    assert counts["ignored"] == 1
+
+
+def test_title_line_exactly_120_seconds_old_is_still_used(env, capsys, monkeypatch):
+    a = add_job(env, "Applied AI Engineer", "Moss", "Warsaw")
+    out_, _, _ = feed(env, capsys, monkeypatch, [(MOSS_HEADER, 0.0), (MOSS_DESC, 120.0)])
+    assert len(snapshots(env, a)) == 1 and "stored (2-part copy)" in out_
+
+
+def test_newer_short_copy_replaces_the_older_title_line(env, capsys, monkeypatch):
+    a = add_job(env, "Applied AI Engineer", "Moss", "Warsaw")
+    _, _, pending = feed(env, capsys, monkeypatch,
+                         [("Old Title Here Corp", 0.0), (MOSS_HEADER, 10.0), (MOSS_DESC, 20.0)])
+    (snap,) = snapshots(env, a)
+    assert snap["content_text"].startswith("Applied AI Engineer\nMoss\nWarsaw\n")
+    assert "Old Title" not in snap["content_text"]
+    assert pending == {}
+
+
+def test_title_line_is_cleared_after_a_store(env, capsys, monkeypatch):
+    a = add_job(env, "Applied AI Engineer", "Moss", "Warsaw")
+    out_, counts, _ = feed(env, capsys, monkeypatch,
+                           [(MOSS_HEADER, 0.0), (MOSS_DESC, 1.0), (jd_text("Florist", "Petal Shop"), 2.0)])
+    assert len(snapshots(env, a)) == 1
+    assert out_.count("stored (2-part copy)") == 1
+    assert counts["ignored"] == 1 and counts["stored"] == 1
+
+
+def test_title_line_over_300_characters_is_not_a_title_line(env, capsys, monkeypatch):
+    a = add_job(env, "Applied AI Engineer", "Moss", "Warsaw")
+    too_long = "Applied AI Engineer " + "Warsaw " * 45
+    assert len(too_long) > 300
+    _, _, pending = feed(env, capsys, monkeypatch, [(too_long, 0.0), (MOSS_DESC, 1.0)])
+    assert pending == {}
+    assert snapshots(env, a) == []
+
+
+def test_firm_two_part_match_beats_a_weaker_candidate(env, capsys, monkeypatch):
+    firm = add_job(env, "Applied AI Engineer", "Moss", "Warsaw")
+    other = add_job(env, "AI Engineer", "Moss", "Warsaw")
+    feed(env, capsys, monkeypatch, [(MOSS_HEADER, 0.0), (MOSS_DESC, 1.0)])
+    (snap,) = snapshots(env, firm)
+    assert snap["verification_status"] == "verified"
+    assert snapshots(env, other) == []
+
+
+def test_title_line_without_the_company_uses_the_weaker_match_as_partial(env, capsys, monkeypatch):
+    a = add_job(env, "Applied AI Engineer", "Moss", "Warsaw")
+    header = "Applied AI, Engineer"                    # the title words, but not the title as one phrase, and no company
+    out_, counts, _ = feed(env, capsys, monkeypatch, [(header, 0.0), (MOSS_DESC, 1.0)])
+    (snap,) = snapshots(env, a)
+    assert snap["verification_status"] == "partial"
+    assert snap["verification_evidence"] == ("copied from clipboard; weaker match: company Moss; 3 of 3 title words; "
+                                             "the job title line was not in the copied text")
+    assert snap["content_text"] == header + "\n" + MOSS_DESC
+    assert f'stored (weaker match): job {a} "Applied AI Engineer" @ Moss (' in out_
+    assert counts["stored"] == 1
